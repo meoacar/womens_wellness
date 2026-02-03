@@ -2,6 +2,7 @@
 const nextConfig = {
   reactStrictMode: true,
   swcMinify: true,
+  output: 'standalone', // PM2 için standalone build
   transpilePackages: [
     '@refinedev/core',
     '@refinedev/nextjs-router',
