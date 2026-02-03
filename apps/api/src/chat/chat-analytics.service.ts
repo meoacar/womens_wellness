@@ -32,39 +32,68 @@ export class ChatAnalyticsService {
         const since = new Date();
         since.setDate(since.getDate() - days);
 
-        // Get user messages from the last N days
-        const messages = await this.prisma.message.findMany({
+        // Get user messages with their corresponding assistant responses
+        const conversations = await this.prisma.conversation.findMany({
             where: {
-                role: 'user',
                 createdAt: { gte: since },
             },
-            select: {
-                content: true,
-                conversationId: true,
-                createdAt: true,
+            include: {
+                messages: {
+                    select: {
+                        role: true,
+                        content: true,
+                        createdAt: true,
+                    },
+                    orderBy: { createdAt: 'asc' },
+                },
             },
-            orderBy: { createdAt: 'desc' },
         });
 
-        // Group similar questions (simple approach: first 100 chars)
-        const questionMap = new Map<string, { count: number; times: number[] }>();
+        // Group similar questions and calculate response times
+        const questionMap = new Map<string, { count: number; responseTimes: number[] }>();
 
-        for (const msg of messages) {
-            const key = msg.content.substring(0, 100).toLowerCase().trim();
-            if (!questionMap.has(key)) {
-                questionMap.set(key, { count: 0, times: [] });
+        for (const conv of conversations) {
+            const messages = conv.messages;
+            for (let i = 0; i < messages.length - 1; i++) {
+                const msg = messages[i];
+                const nextMsg = messages[i + 1];
+
+                // If user message followed by assistant message
+                if (msg.role === 'user' && nextMsg.role === 'assistant') {
+                    const key = msg.content.substring(0, 100).toLowerCase().trim();
+                    const responseTime = nextMsg.createdAt.getTime() - msg.createdAt.getTime();
+
+                    if (!questionMap.has(key)) {
+                        questionMap.set(key, { count: 0, responseTimes: [] });
+                    }
+                    const entry = questionMap.get(key)!;
+                    entry.count++;
+                    // Only count reasonable response times (< 30 seconds)
+                    if (responseTime < 30000) {
+                        entry.responseTimes.push(responseTime);
+                    }
+                }
             }
-            const entry = questionMap.get(key)!;
-            entry.count++;
         }
 
         // Convert to array and sort by count
         const topQuestions = Array.from(questionMap.entries())
-            .map(([question, data]) => ({
-                question,
-                count: data.count,
-                avgResponseTime: 0, // TODO: Calculate from assistant messages
-            }))
+            .map(([question, data]) => {
+                const avgResponseTime =
+                    data.responseTimes.length > 0
+                        ? Math.round(
+                            data.responseTimes.reduce((sum, time) => sum + time, 0) /
+                            data.responseTimes.length /
+                            1000,
+                        ) // Convert to seconds
+                        : 0;
+
+                return {
+                    question,
+                    count: data.count,
+                    avgResponseTime,
+                };
+            })
             .sort((a, b) => b.count - a.count)
             .slice(0, limit);
 

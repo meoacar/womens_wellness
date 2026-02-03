@@ -85,10 +85,16 @@ export class AdminService {
             : 0;
 
         // Subscription stats
-        const [totalSubs, activeSubs] = await Promise.all([
+        const [totalSubs, activeSubs, previousPeriodSubs] = await Promise.all([
             this.prisma.subscription.count(),
             this.prisma.subscription.count({
                 where: {
+                    status: SubscriptionStatus.ACTIVE,
+                },
+            }),
+            this.prisma.subscription.count({
+                where: {
+                    createdAt: { gte: sixtyDaysAgo, lt: start },
                     status: SubscriptionStatus.ACTIVE,
                 },
             }),
@@ -105,7 +111,18 @@ export class AdminService {
             return sum + (tierPrices[sub.tier || 'FREE'] || 0);
         }, 0);
 
-        // Engagement stats - using updatedAt as proxy
+        // Calculate subscription growth
+        const currentPeriodNewSubs = await this.prisma.subscription.count({
+            where: {
+                createdAt: { gte: start, lte: end },
+                status: SubscriptionStatus.ACTIVE,
+            },
+        });
+        const subscriptionGrowth = previousPeriodSubs > 0
+            ? ((currentPeriodNewSubs - previousPeriodSubs) / previousPeriodSubs) * 100
+            : 0;
+
+        // Engagement stats - using message activity as proxy for session time
         const [dailyActive, weeklyActive, monthlyActive] = await Promise.all([
             this.prisma.user.count({
                 where: {
@@ -123,6 +140,43 @@ export class AdminService {
                 },
             }),
         ]);
+
+        // Calculate average session time from conversation activity
+        const recentConversations = await this.prisma.conversation.findMany({
+            where: {
+                createdAt: { gte: start },
+            },
+            include: {
+                messages: {
+                    select: {
+                        createdAt: true,
+                    },
+                    orderBy: {
+                        createdAt: 'asc',
+                    },
+                },
+            },
+        });
+
+        let totalSessionTime = 0;
+        let sessionCount = 0;
+
+        for (const conv of recentConversations) {
+            if (conv.messages.length >= 2) {
+                const firstMsg = conv.messages[0];
+                const lastMsg = conv.messages[conv.messages.length - 1];
+                const sessionDuration = lastMsg.createdAt.getTime() - firstMsg.createdAt.getTime();
+                // Only count sessions between 1 minute and 2 hours
+                if (sessionDuration >= 60000 && sessionDuration <= 7200000) {
+                    totalSessionTime += sessionDuration;
+                    sessionCount++;
+                }
+            }
+        }
+
+        const avgSessionTime = sessionCount > 0
+            ? Math.round(totalSessionTime / sessionCount / 1000) // Convert to seconds
+            : 0;
 
         // Content stats
         const [questions, answers, conversations] = await Promise.all([
@@ -142,13 +196,13 @@ export class AdminService {
                 total: totalSubs,
                 active: activeSubs,
                 revenue,
-                growth: 0, // TODO: Calculate from previous period
+                growth: subscriptionGrowth,
             },
             engagement: {
                 dailyActive,
                 weeklyActive,
                 monthlyActive,
-                avgSessionTime: 0, // TODO: Calculate from session data
+                avgSessionTime,
             },
             content: {
                 questions,
@@ -495,23 +549,26 @@ export class AdminService {
      * System Health Metrics
      */
     async getSystemHealth() {
+        const startTime = Date.now();
         const [
             dbStatus,
             userCount,
             activeConnections,
-            errorRate,
         ] = await Promise.all([
             this.checkDatabaseHealth(),
             this.prisma.user.count(),
             this.getActiveConnections(),
-            this.getErrorRate(),
         ]);
+        const dbResponseTime = Date.now() - startTime;
+
+        // Calculate error rate from recent audit logs (if any errors logged)
+        const errorRate = await this.getErrorRate();
 
         return {
             status: dbStatus ? 'healthy' : 'unhealthy',
             database: {
                 connected: dbStatus,
-                responseTime: 0, // TODO: Measure actual response time
+                responseTime: dbResponseTime,
             },
             users: {
                 total: userCount,
@@ -535,12 +592,36 @@ export class AdminService {
     }
 
     private async getActiveConnections(): Promise<number> {
-        // TODO: Implement actual connection tracking
-        return 0;
+        // Count users with activity in last 5 minutes
+        const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+        const activeUsers = await this.prisma.user.count({
+            where: {
+                updatedAt: { gte: fiveMinutesAgo },
+            },
+        });
+        return activeUsers;
     }
 
     private async getErrorRate(): Promise<number> {
-        // TODO: Calculate from error logs
-        return 0;
+        // Calculate error rate from audit logs in last hour
+        const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+
+        const [totalActions, errorActions] = await Promise.all([
+            this.prisma.auditLog.count({
+                where: {
+                    createdAt: { gte: oneHourAgo },
+                },
+            }),
+            this.prisma.auditLog.count({
+                where: {
+                    createdAt: { gte: oneHourAgo },
+                    action: {
+                        contains: 'ERROR',
+                    },
+                },
+            }),
+        ]);
+
+        return totalActions > 0 ? errorActions / totalActions : 0;
     }
 }

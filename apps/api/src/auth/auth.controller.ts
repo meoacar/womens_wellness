@@ -183,6 +183,15 @@ export class AuthController {
   @Get('reset-password')
   @ApiOperation({ summary: 'Serve password reset page' })
   async serveResetPasswordPage(@Res() res: FastifyReply) {
-    return res.sendFile('reset-password.html');
+    const fs = require('fs');
+    const path = require('path');
+    const filePath = path.join(process.cwd(), 'public', 'reset-password.html');
+
+    if (fs.existsSync(filePath)) {
+      const html = fs.readFileSync(filePath, 'utf-8');
+      return res.type('text/html').send(html);
+    } else {
+      return res.status(404).send({ message: 'Reset password page not found' });
+    }
   }
 }
