@@ -10,6 +10,9 @@
             "android": {
                 "buildType": "apk"
             },
+            "env": {
+                "APP_ENV": "development"
+            },
             "node": "20.18.0"
         },
         "demo": {
@@ -38,9 +41,10 @@
         },
         "production": {
             "android": {
-                "buildType": "apk"
+                "buildType": "app-bundle"
             },
             "env": {
+                "APP_ENV": "production",
                 "EXPO_PUBLIC_API_BASE_URL": "https://api.kadinatlasi.com"
             },
             "node": "20.18.0"

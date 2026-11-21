@@ -96,8 +96,10 @@ export class SharingService {
             ? question.content.substring(0, 200) + '...'
             : question.content;
 
-        // Use user profile picture or default image
-        const image = question.user.profile?.profilePictureUrl || undefined;
+        // Use user profile picture only when question is not anonymous
+        const image = question.isAnonymous
+            ? undefined
+            : question.user.profile?.profilePictureUrl || undefined;
 
         const answerText = question._count.answers === 1 ? 'cevap' : 'cevap';
         const title = `${question.title} - ${question._count.answers} ${answerText}`;
@@ -119,6 +121,8 @@ export class SharingService {
                     select: {
                         id: true,
                         title: true,
+                        isAnonymous: true,
+                        userId: true,
                     },
                 },
                 user: {
@@ -143,9 +147,17 @@ export class SharingService {
             ? answer.content.substring(0, 200) + '...'
             : answer.content;
 
-        const image = answer.user.profile?.profilePictureUrl || undefined;
+        const isAnonymousAuthor = Boolean(
+            answer.question.isAnonymous && answer.userId === answer.question.userId,
+        );
+        const image = isAnonymousAuthor
+            ? undefined
+            : answer.user.profile?.profilePictureUrl || undefined;
 
-        const title = `${answer.user.username}'in cevabı: ${answer.question.title}`;
+        const authorLabel = isAnonymousAuthor
+            ? 'Anonim kullanıcı'
+            : answer.user.username || 'Topluluk Üyesi';
+        const title = `${authorLabel} cevabı: ${answer.question.title}`;
 
         return {
             title,

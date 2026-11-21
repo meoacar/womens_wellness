@@ -3,6 +3,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useState } from 'react';
 import { useRouter } from 'expo-router';
 import { useTheme } from '@/hooks/useTheme';
+import { validateHeightCm } from '@/utils/numberInput';
 
 export default function IdealWeightCalculatorScreen() {
     const theme = useTheme();
@@ -11,12 +12,12 @@ export default function IdealWeightCalculatorScreen() {
     const [result, setResult] = useState<any>(null);
 
     const handleCalculate = () => {
-        const h = parseFloat(height);
-
-        if (isNaN(h) || h <= 0) {
-            Alert.alert('Hata', 'Lütfen geçerli bir boy değeri girin');
+        const heightCheck = validateHeightCm(height);
+        if (heightCheck.error || !heightCheck.value) {
+            Alert.alert('Hata', heightCheck.error || 'Lütfen geçerli bir boy değeri girin');
             return;
         }
+        const h = heightCheck.value;
 
         // Different formulas for ideal weight
         const heightM = h / 100;
@@ -26,27 +27,22 @@ export default function IdealWeightCalculatorScreen() {
         const maxWeight = 24.9 * heightM * heightM;
         const idealWeight = (minWeight + maxWeight) / 2;
 
-        // Devine Formula (for women) - 45.5 kg at 152.4 cm (5 feet), then 2.3 kg per inch
+        // Height-based clinical formulas (for women; base at 60 inches / 152.4 cm)
         const heightInches = h / 2.54;
-        const devine = h >= 152.4 ? 45.5 + 2.3 * ((heightInches - 60)) : 45.5;
-
-        // Robinson Formula (for women) - 49 kg at 152.4 cm, then 1.7 kg per inch
-        const robinson = h >= 152.4 ? 49 + 1.7 * ((heightInches - 60)) : 49;
-
-        // Miller Formula (for women) - 53.1 kg at 152.4 cm, then 1.36 kg per inch
-        const miller = h >= 152.4 ? 53.1 + 1.36 * ((heightInches - 60)) : 53.1;
-
-        // Hamwi Formula (for women) - 45.5 kg at 152.4 cm, then 2.2 kg per inch
-        const hamwi = h >= 152.4 ? 45.5 + 2.2 * ((heightInches - 60)) : 45.5;
+        const inchDiff = heightInches - 60;
+        const devine = 45.5 + 2.3 * inchDiff;
+        const robinson = 49 + 1.7 * inchDiff;
+        const miller = 53.1 + 1.36 * inchDiff;
+        const hamwi = 45.5 + 2.2 * inchDiff;
 
         setResult({
             minWeight,
             maxWeight,
             idealWeight,
-            devine: Math.max(devine, 0),
-            robinson: Math.max(robinson, 0),
-            miller: Math.max(miller, 0),
-            hamwi: Math.max(hamwi, 0),
+            devine: Math.max(devine, 30),
+            robinson: Math.max(robinson, 30),
+            miller: Math.max(miller, 30),
+            hamwi: Math.max(hamwi, 30),
         });
     };
 

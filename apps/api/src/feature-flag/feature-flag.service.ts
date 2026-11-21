@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
 const INTERNAL_KEY_PREFIXES = [
@@ -19,6 +19,8 @@ const LEGACY_UNUSED_KEYS = [
   'reminders.server_push',
   'admin.impersonation',
 ];
+
+const RESTRICTED_EXACT_KEYS = [...INTERNAL_EXACT_KEYS, ...LEGACY_UNUSED_KEYS];
 
 const CORE_LIVE_FLAGS: Array<{ key: string; valueJson: boolean }> = [
   { key: 'maintenance_mode', valueJson: false },
@@ -58,7 +60,7 @@ export class FeatureFlagService {
           NOT: { key: { startsWith: prefix } },
         })),
         {
-          key: { notIn: [...INTERNAL_EXACT_KEYS, ...LEGACY_UNUSED_KEYS] },
+          key: { notIn: RESTRICTED_EXACT_KEYS },
         },
       ],
     };
@@ -102,9 +104,24 @@ export class FeatureFlagService {
     };
   }
 
+  private isRestrictedKey(key: string): boolean {
+    const normalized = (key || '').trim();
+    return (
+      RESTRICTED_EXACT_KEYS.includes(normalized) ||
+      INTERNAL_KEY_PREFIXES.some((prefix) => normalized.startsWith(prefix))
+    );
+  }
+
   async findOne(key: string) {
-    const flag = await this.prisma.featureFlag.findUnique({
-      where: { key },
+    const normalized = (key || '').trim();
+    if (!normalized || this.isRestrictedKey(normalized)) {
+      throw new NotFoundException(`FeatureFlag with key ${key} not found`);
+    }
+
+    const flag = await this.prisma.featureFlag.findFirst({
+      where: {
+        AND: [{ key: normalized }, this.buildPublicFilter()],
+      },
     });
 
     if (!flag) {
@@ -139,22 +156,46 @@ export class FeatureFlagService {
   }
 
   async create(data: { key: string; valueJson: any }) {
+    const normalized = (data?.key || '').trim();
+    if (!normalized || this.isRestrictedKey(normalized)) {
+      throw new BadRequestException('Invalid or reserved feature flag key');
+    }
+
     return this.prisma.featureFlag.create({
-      data,
+      data: {
+        key: normalized,
+        valueJson: data.valueJson,
+      },
     });
   }
 
   async update(key: string, data: { valueJson: any }) {
-    const flag = await this.findOne(key);
+    const normalized = (key || '').trim();
+    if (!normalized || this.isRestrictedKey(normalized)) {
+      throw new NotFoundException(`FeatureFlag with key ${key} not found`);
+    }
+
+    const flag = await this.findByKey(normalized);
+    if (!flag) {
+      throw new NotFoundException(`FeatureFlag with key ${key} not found`);
+    }
 
     return this.prisma.featureFlag.update({
       where: { key: flag.key },
-      data,
+      data: { valueJson: data.valueJson },
     });
   }
 
   async delete(key: string) {
-    const flag = await this.findOne(key);
+    const normalized = (key || '').trim();
+    if (!normalized || this.isRestrictedKey(normalized)) {
+      throw new NotFoundException(`FeatureFlag with key ${key} not found`);
+    }
+
+    const flag = await this.findByKey(normalized);
+    if (!flag) {
+      throw new NotFoundException(`FeatureFlag with key ${key} not found`);
+    }
 
     return this.prisma.featureFlag.delete({
       where: { key: flag.key },

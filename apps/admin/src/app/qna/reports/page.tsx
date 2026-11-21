@@ -2,13 +2,14 @@
 
 import { useTable } from '@refinedev/antd';
 import { List } from '@refinedev/antd';
-import { Table, Tag, Button, Space, Badge, Tooltip } from 'antd';
+import { Table, Tag, Button, Space, Badge, Tooltip, theme as antdTheme } from 'antd';
 import { EyeOutlined, WarningOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { useRouter } from 'next/navigation';
 
 export default function ReportsList() {
     const router = useRouter();
+    const { token } = antdTheme.useToken();
     const { tableProps } = useTable({
         resource: 'qna/moderation/reports',
         syncWithLocation: true,
@@ -67,13 +68,13 @@ export default function ReportsList() {
             render: (description: string) => (
                 description ? (
                     <Tooltip title={description}>
-                        <span style={{ color: '#888' }}>
+                        <span style={{ color: token.colorTextSecondary }}>
                             {description.substring(0, 50)}
                             {description.length > 50 ? '...' : ''}
                         </span>
                     </Tooltip>
                 ) : (
-                    <span style={{ color: '#ccc' }}>-</span>
+                    <span style={{ color: token.colorTextTertiary }}>-</span>
                 )
             ),
         },
@@ -142,7 +143,7 @@ export default function ReportsList() {
                     <Tooltip title={dayjs(date).format('DD.MM.YYYY HH:mm:ss')}>
                         <span>
                             {diffHours < 24 && (
-                                <WarningOutlined style={{ color: '#ff4d4f', marginRight: 4 }} />
+                                <WarningOutlined style={{ color: token.colorError, marginRight: 4 }} />
                             )}
                             {dayjs(date).format('DD.MM.YYYY HH:mm')}
                         </span>
@@ -187,11 +188,13 @@ export default function ReportsList() {
                 }
             />
             <style jsx global>{`
-                .pending-report {
-                    background-color: #fff7e6;
+                .pending-report > td.ant-table-cell {
+                    background-color: ${token.colorWarningBg};
+                    color: ${token.colorText};
                 }
-                .pending-report:hover {
-                    background-color: #ffe7ba !important;
+                .pending-report:hover > td.ant-table-cell,
+                .pending-report > td.ant-table-cell-row-hover {
+                    background-color: ${token.colorWarningBgHover} !important;
                 }
             `}</style>
         </List>

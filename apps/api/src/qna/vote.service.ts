@@ -10,6 +10,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { VoteType } from '@prisma/client';
 import { ReputationService } from './reputation.service';
 import { QnaNotificationService } from './qna-notification.service';
+import { sanitizeAnswerResponse } from './utils/sanitize-author';
 
 @Injectable()
 export class VoteService {
@@ -309,7 +310,7 @@ export class VoteService {
      * Requirements: 5.4
      */
     async getTopAnswers(questionId: string, limit: number = 10) {
-        return this.prisma.answer.findMany({
+        const answers = await this.prisma.answer.findMany({
             where: { questionId },
             orderBy: [
                 { isBestAnswer: 'desc' }, // En iyi cevap önce
@@ -318,6 +319,13 @@ export class VoteService {
             ],
             take: limit,
             include: {
+                question: {
+                    select: {
+                        id: true,
+                        isAnonymous: true,
+                        userId: true,
+                    },
+                },
                 user: {
                     select: {
                         id: true,
@@ -338,5 +346,7 @@ export class VoteService {
                 },
             },
         });
+
+        return answers.map((answer) => sanitizeAnswerResponse(answer));
     }
 }

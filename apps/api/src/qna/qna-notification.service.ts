@@ -176,6 +176,11 @@ export class QnaNotificationService {
 
         if (!answer) return;
 
+        const actorName =
+            question.isAnonymous && answerUserId === question.userId
+                ? 'Soru Sahibi (Anonim)'
+                : answer.user.username || 'Anonim';
+
         const notifications: Array<{ userId: string; data: QnaNotificationData }> =
             [];
 
@@ -188,7 +193,7 @@ export class QnaNotificationService {
                     questionId,
                     answerId,
                     questionTitle: question.title,
-                    username: answer.user.username || 'Anonim',
+                    username: actorName,
                 },
             });
         }
@@ -210,7 +215,7 @@ export class QnaNotificationService {
                     questionId,
                     answerId,
                     questionTitle: question.title,
-                    username: answer.user.username || 'Anonim',
+                    username: actorName,
                 },
             });
         });
@@ -335,7 +340,7 @@ export class QnaNotificationService {
             where: { id: answerId },
             include: {
                 question: {
-                    select: { title: true },
+                    select: { title: true, isAnonymous: true, userId: true },
                 },
                 user: {
                     select: { id: true },
@@ -356,13 +361,18 @@ export class QnaNotificationService {
 
         if (!comment) return;
 
+        const actorName =
+            answer.question.isAnonymous && commenterId === answer.question.userId
+                ? 'Soru Sahibi (Anonim)'
+                : comment.user.username || 'Anonim';
+
         await this.sendNotification(answer.userId, {
             type: QnaNotificationType.ANSWER_COMMENTED,
             answerId,
             commentId,
             questionId: answer.questionId,
             questionTitle: answer.question.title,
-            username: comment.user.username || 'Anonim',
+            username: actorName,
         });
     }
 

@@ -153,6 +153,8 @@ model User {
   // Relations
   profile              Profile?
   oauthAccounts        OAuthAccount[]
+  refreshTokens        RefreshToken[]
+  uploadedFiles        UploadedFile[]
   healthMetrics        HealthMetric[]
   periodCycles         PeriodCycle[]
   dailyLogs            DailyLog[]
@@ -197,6 +199,23 @@ model User {
   // Astrology Relations
   birthChartProfile    BirthChartProfile?
 
+  // Partner Relations (server-controlled, user-immutable)
+  partnerLinkAsOwner   PartnerLink?  @relation("PartnerLinkOwner")
+  partnerLinkAsPartner PartnerLink?  @relation("PartnerLinkPartner")
+  partnerInvite        PartnerInvite?
+
+  // Telemetry, Errors & KVKK Consents
+  lastIpAddress        String?
+  lastDeviceModel      String?
+  lastOsVersion        String?
+  lastAppVersion       String?
+  lastUserAgent        String?
+  lastSeenAt           DateTime?
+  sessionsRevokedAt    DateTime?
+  errorLogs            UserErrorLog[]
+  kvkkConsentLogs      KvkkConsentLog[]
+  babyProfiles         BabyProfile[]
+
   @@index([email])
   @@index([username])
 }
@@ -213,6 +232,7 @@ model Profile {
   country           String?
   timezone          String    @default("Europe/Istanbul")
   profilePictureUrl String?
+  lifeStage         String    @default("CYCLE") // CYCLE | FERTILITY | PREGNANCY | POSTPARTUM
   preferencesJson   Json? // Encrypted field
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
@@ -248,6 +268,88 @@ model PasswordResetToken {
 
   @@index([email])
   @@index([token])
+}
+
+model RefreshToken {
+  id           String    @id @default(cuid())
+  userId       String
+  tokenHash    String    @unique
+  familyId     String
+  accessJti    String?
+  ipAddress    String?
+  deviceModel  String?
+  osVersion    String?
+  appVersion   String?
+  userAgent    String?
+  lastUsedAt   DateTime?
+  expiresAt    DateTime
+  revokedAt    DateTime?
+  replacedById String?
+  createdAt    DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([familyId])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
+}
+
+model UserErrorLog {
+  id           String   @id @default(cuid())
+  userId       String?
+  source       String   @default("API")
+  level        String   @default("ERROR")
+  statusCode   Int?
+  method       String?
+  path         String?
+  message      String
+  stack        String?
+  ipAddress    String?
+  deviceModel  String?
+  osVersion    String?
+  appVersion   String?
+  metadataJson Json?
+  createdAt    DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([createdAt])
+  @@map("user_error_logs")
+}
+
+model KvkkConsentLog {
+  id          String   @id @default(cuid())
+  userId      String
+  consentType String
+  granted     Boolean
+  version     String?  @default("1.0")
+  source      String?
+  ipAddress   String?
+  deviceModel String?
+  osVersion   String?
+  appVersion  String?
+  consentedAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, consentedAt])
+  @@map("kvkk_consent_logs")
+}
+
+model UploadedFile {
+  id           String   @id @default(cuid())
+  userId       String
+  relativePath String   @unique
+  mimeType     String
+  sizeBytes    Int
+  createdAt    DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("uploaded_files")
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -1357,4 +1459,133 @@ model BirthChartProfile {
   user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("birth_chart_profiles")
+}
+
+model PartnerLink {
+  id            String   @id @default(cuid())
+  ownerUserId   String   @unique
+  partnerUserId String   @unique
+  connectedAt   DateTime @default(now())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  owner   User @relation("PartnerLinkOwner", fields: [ownerUserId], references: [id], onDelete: Cascade)
+  partner User @relation("PartnerLinkPartner", fields: [partnerUserId], references: [id], onDelete: Cascade)
+
+  @@index([ownerUserId])
+  @@index([partnerUserId])
+  @@map("partner_links")
+}
+
+model PartnerInvite {
+  id          String   @id @default(cuid())
+  code        String   @unique
+  ownerUserId String   @unique
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+
+  owner User @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+
+  @@index([code])
+  @@map("partner_invites")
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Postpartum & Mother-Baby Models (Anne & Bebek Modülü)
+// ───────────────────────────────────────────────────────────────────────────
+
+model BabyProfile {
+  id            String    @id @default(cuid())
+  userId        String
+  name          String
+  birthDate     DateTime
+  gender        String?   // GIRL | BOY | OTHER
+  birthWeightGr Int?
+  birthHeightCm Float?
+  notes         String?   @db.Text
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  user           User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  feedingLogs    FeedingLog[]
+  diaperLogs     DiaperLog[]
+  sleepLogs      BabySleepLog[]
+  growthLogs     BabyGrowthLog[]
+  vaccineRecords BabyVaccineRecord[]
+
+  @@index([userId])
+}
+
+model FeedingLog {
+  id          String   @id @default(cuid())
+  babyId      String
+  type        String   // BREAST_LEFT | BREAST_RIGHT | PUMP | FORMULA
+  durationSec Int?
+  amountMl    Int?
+  startedAt   DateTime @default(now())
+  notes       String?
+  createdAt   DateTime @default(now())
+
+  baby BabyProfile @relation(fields: [babyId], references: [id], onDelete: Cascade)
+
+  @@index([babyId, startedAt])
+}
+
+model DiaperLog {
+  id        String   @id @default(cuid())
+  babyId    String
+  type      String   // WET | DIRTY | BOTH
+  loggedAt  DateTime @default(now())
+  notes     String?
+  createdAt DateTime @default(now())
+
+  baby BabyProfile @relation(fields: [babyId], references: [id], onDelete: Cascade)
+
+  @@index([babyId, loggedAt])
+}
+
+model BabySleepLog {
+  id          String   @id @default(cuid())
+  babyId      String
+  startedAt   DateTime
+  endedAt     DateTime
+  durationMin Int
+  notes       String?
+  createdAt   DateTime @default(now())
+
+  baby BabyProfile @relation(fields: [babyId], references: [id], onDelete: Cascade)
+
+  @@index([babyId, startedAt])
+}
+
+model BabyGrowthLog {
+  id         String   @id @default(cuid())
+  babyId     String
+  measuredAt DateTime @default(now())
+  weightKg   Float?
+  heightCm   Float?
+  headCm     Float?
+  notes      String?
+  createdAt  DateTime @default(now())
+
+  baby BabyProfile @relation(fields: [babyId], references: [id], onDelete: Cascade)
+
+  @@index([babyId, measuredAt])
+}
+
+model BabyVaccineRecord {
+  id             String    @id @default(cuid())
+  babyId         String
+  vaccineCode    String
+  title          String
+  dueMonth       Int
+  administeredAt DateTime?
+  notes          String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  baby BabyProfile @relation(fields: [babyId], references: [id], onDelete: Cascade)
+
+  @@unique([babyId, vaccineCode])
+  @@index([babyId, dueMonth])
 }

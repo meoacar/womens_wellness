@@ -1,7 +1,12 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { randomInt } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
-
-const INVITE_PREFIX = 'partner_invite_';
 
 export interface PartnerLinkMeta {
   partnerUserId: string;
@@ -14,11 +19,15 @@ export interface PartnerLinkMeta {
 export class PartnerService {
   constructor(private readonly prisma: PrismaService) {}
 
-  private async assertPartnerModeEnabled() {
+  private async isPartnerModeEnabled(): Promise<boolean> {
     const flag = await this.prisma.featureFlag.findUnique({
       where: { key: 'partner_mode_enabled' },
     });
-    if (flag && flag.valueJson === false) {
+    return !(flag && flag.valueJson === false);
+  }
+
+  private async assertPartnerModeEnabled() {
+    if (!(await this.isPartnerModeEnabled())) {
       throw new ForbiddenException(
         'Partner Modu şu anda yönetici tarafından geçici olarak devre dışı bırakılmıştır.',
       );
@@ -29,45 +38,52 @@ export class PartnerService {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
     let code = '';
     for (let i = 0; i < 6; i++) {
-      code += chars[Math.floor(Math.random() * chars.length)];
+      code += chars[randomInt(0, chars.length)];
     }
     return code;
   }
 
   async createInvite(userId: string) {
     await this.assertPartnerModeEnabled();
-    const profile = await this.prisma.profile.findUnique({ where: { userId } });
-    if (!profile) {
+
+    const [user, existingLink] = await Promise.all([
+      this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { status: true, profile: { select: { id: true } } },
+      }),
+      this.prisma.partnerLink.findFirst({
+        where: { OR: [{ ownerUserId: userId }, { partnerUserId: userId }] },
+      }),
+    ]);
+
+    if (!user || user.status !== 'ACTIVE' || !user.profile) {
       throw new NotFoundException('Profil bulunamadı');
     }
 
-    const code = this.generateCode();
-    const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString();
+    if (existingLink) {
+      throw new ConflictException(
+        'Zaten aktif bir partner bağlantınız var. Yeni davet kodu için önce mevcut bağlantıyı kaldırın.',
+      );
+    }
 
-    await this.prisma.featureFlag.upsert({
-      where: { key: `${INVITE_PREFIX}${code}` },
-      update: {
-        valueJson: {
-          ownerUserId: userId,
-          ownerDisplayName: profile.displayName || 'Kullanıcı',
-          expiresAt,
-          createdAt: new Date().toISOString(),
-        } as any,
-      },
-      create: {
-        key: `${INVITE_PREFIX}${code}`,
-        valueJson: {
-          ownerUserId: userId,
-          ownerDisplayName: profile.displayName || 'Kullanıcı',
-          expiresAt,
-          createdAt: new Date().toISOString(),
-        } as any,
-      },
+    const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000);
+    let code = this.generateCode();
+
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const collision = await this.prisma.partnerInvite.findUnique({ where: { code } });
+      if (!collision || collision.ownerUserId === userId) break;
+      code = this.generateCode();
+    }
+
+    await this.prisma.partnerInvite.upsert({
+      where: { ownerUserId: userId },
+      update: { code, expiresAt },
+      create: { code, ownerUserId: userId, expiresAt },
     });
 
     return {
       code,
-      expiresAt,
+      expiresAt: expiresAt.toISOString(),
       message: 'Bu 6 haneli davet kodunu eşiniz veya partnerinizle paylaşabilirsiniz.',
     };
   }
@@ -79,113 +95,175 @@ export class PartnerService {
       throw new BadRequestException('Geçerli bir davet kodu girin.');
     }
 
-    const inviteFlag = await this.prisma.featureFlag.findUnique({
-      where: { key: `${INVITE_PREFIX}${code}` },
+    const link = await this.prisma.$transaction(async (tx) => {
+      const invite = await tx.partnerInvite.findUnique({
+        where: { code },
+      });
+
+      if (!invite) {
+        throw new NotFoundException('Davet kodu bulunamadı veya süresi doldu.');
+      }
+
+      if (invite.expiresAt.getTime() < Date.now()) {
+        await tx.partnerInvite.delete({ where: { id: invite.id } });
+        throw new BadRequestException('Bu davet kodunun süresi dolmuş.');
+      }
+
+      if (invite.ownerUserId === partnerUserId) {
+        throw new BadRequestException('Kendi davet kodunuzu kullanamazsınız.');
+      }
+
+      const [owner, partner, existingLink] = await Promise.all([
+        tx.user.findUnique({
+          where: { id: invite.ownerUserId },
+          select: { id: true, status: true, profile: { select: { displayName: true } } },
+        }),
+        tx.user.findUnique({
+          where: { id: partnerUserId },
+          select: { id: true, status: true, profile: { select: { displayName: true } } },
+        }),
+        tx.partnerLink.findFirst({
+          where: {
+            OR: [
+              { ownerUserId: { in: [invite.ownerUserId, partnerUserId] } },
+              { partnerUserId: { in: [invite.ownerUserId, partnerUserId] } },
+            ],
+          },
+        }),
+      ]);
+
+      if (!owner || owner.status !== 'ACTIVE' || !owner.profile || !partner || partner.status !== 'ACTIVE' || !partner.profile) {
+        throw new NotFoundException('Kullanıcı profili bulunamadı.');
+      }
+
+      if (existingLink) {
+        throw new ConflictException(
+          'Kullanıcılardan birinin zaten aktif bir partner bağlantısı bulunuyor.',
+        );
+      }
+
+      const createdLink = await tx.partnerLink.create({
+        data: {
+          ownerUserId: invite.ownerUserId,
+          partnerUserId,
+        },
+      });
+
+      await tx.partnerInvite.delete({ where: { id: invite.id } });
+
+      const linkMeta: PartnerLinkMeta = {
+        partnerUserId: invite.ownerUserId,
+        partnerDisplayName: owner.profile.displayName || 'Kullanıcı',
+        role: 'partner',
+        connectedAt: createdLink.connectedAt.toISOString(),
+      };
+
+      return linkMeta;
     });
 
-    if (!inviteFlag) {
-      throw new NotFoundException('Davet kodu bulunamadı veya süresi doldu.');
-    }
-
-    const invite = inviteFlag.valueJson as any;
-    if (invite.expiresAt && new Date(invite.expiresAt).getTime() < Date.now()) {
-      await this.prisma.featureFlag.delete({ where: { key: `${INVITE_PREFIX}${code}` } });
-      throw new BadRequestException('Bu davet kodunun süresi dolmuş.');
-    }
-
-    if (invite.ownerUserId === partnerUserId) {
-      throw new BadRequestException('Kendi davet kodunuzu kullanamazsınız.');
-    }
-
-    const [ownerProfile, partnerProfile] = await Promise.all([
-      this.prisma.profile.findUnique({ where: { userId: invite.ownerUserId } }),
-      this.prisma.profile.findUnique({ where: { userId: partnerUserId } }),
-    ]);
-
-    if (!ownerProfile || !partnerProfile) {
-      throw new NotFoundException('Kullanıcı profili bulunamadı.');
-    }
-
-    const connectedAt = new Date().toISOString();
-
-    const ownerPrefs = ((ownerProfile.preferencesJson as Record<string, any>) || {});
-    const partnerPrefs = ((partnerProfile.preferencesJson as Record<string, any>) || {});
-
-    const ownerLink: PartnerLinkMeta = {
-      partnerUserId,
-      partnerDisplayName: partnerProfile.displayName || 'Partner',
-      role: 'owner',
-      connectedAt,
-    };
-    const partnerLink: PartnerLinkMeta = {
-      partnerUserId: invite.ownerUserId,
-      partnerDisplayName: ownerProfile.displayName || 'Kullanıcı',
-      role: 'partner',
-      connectedAt,
-    };
-
-    await Promise.all([
-      this.prisma.profile.update({
-        where: { userId: invite.ownerUserId },
-        data: { preferencesJson: { ...ownerPrefs, partnerLink: ownerLink } as any },
-      }),
-      this.prisma.profile.update({
-        where: { userId: partnerUserId },
-        data: { preferencesJson: { ...partnerPrefs, partnerLink } as any },
-      }),
-      this.prisma.featureFlag.delete({ where: { key: `${INVITE_PREFIX}${code}` } }),
-    ]);
-
-    return { connected: true, link: partnerLink };
+    return { connected: true, link };
   }
 
   async unlink(userId: string) {
-    const profile = await this.prisma.profile.findUnique({ where: { userId } });
-    if (!profile) return { connected: false };
-
-    const prefs = ((profile.preferencesJson as Record<string, any>) || {});
-    const existingLink = prefs.partnerLink as PartnerLinkMeta | undefined;
-
-    const { partnerLink: _removed, ...restPrefs } = prefs;
-    await this.prisma.profile.update({
-      where: { userId },
-      data: { preferencesJson: restPrefs as any },
-    });
-
-    if (existingLink?.partnerUserId) {
-      const other = await this.prisma.profile.findUnique({
-        where: { userId: existingLink.partnerUserId },
+    await this.prisma.$transaction(async (tx) => {
+      const existingLink = await tx.partnerLink.findFirst({
+        where: { OR: [{ ownerUserId: userId }, { partnerUserId: userId }] },
       });
-      if (other) {
-        const otherPrefs = ((other.preferencesJson as Record<string, any>) || {});
-        const { partnerLink: _otherRemoved, ...otherRest } = otherPrefs;
-        await this.prisma.profile.update({
-          where: { userId: existingLink.partnerUserId },
-          data: { preferencesJson: otherRest as any },
-        });
+
+      if (existingLink) {
+        await tx.partnerLink.delete({ where: { id: existingLink.id } });
       }
-    }
+
+      // Remove any legacy partnerLink metadata if it still existed in profile preferences
+      const affectedUserIds = existingLink
+        ? [existingLink.ownerUserId, existingLink.partnerUserId]
+        : [userId];
+
+      for (const uid of affectedUserIds) {
+        const prof = await tx.profile.findUnique({
+          where: { userId: uid },
+          select: { preferencesJson: true },
+        });
+        const prefs = prof?.preferencesJson as Record<string, any> | null;
+        if (prefs && typeof prefs === 'object' && 'partnerLink' in prefs) {
+          const { partnerLink: _removed, ...restPrefs } = prefs;
+          await tx.profile.update({
+            where: { userId: uid },
+            data: { preferencesJson: restPrefs as any },
+          });
+        }
+      }
+    });
 
     return { connected: false };
   }
 
   async getStatus(userId: string) {
-    const profile = await this.prisma.profile.findUnique({ where: { userId } });
-    const prefs = ((profile?.preferencesJson as Record<string, any>) || {});
-    const link = prefs.partnerLink as PartnerLinkMeta | undefined;
-
-    if (!link) {
+    if (!(await this.isPartnerModeEnabled())) {
       return { connected: false, link: null, partnerSummary: null };
     }
 
-    // Strict privacy boundary: ONLY when viewer has role === 'partner', expose high-level phase & support tip.
-    // Never expose daily notes, flow intensity, symptoms, or sexual logs.
-    if (link.role !== 'partner') {
+    // Authoritative server-controlled mutual link lookup; never read from user-editable preferencesJson
+    const linkRecord = await this.prisma.partnerLink.findFirst({
+      where: {
+        OR: [{ ownerUserId: userId }, { partnerUserId: userId }],
+      },
+      include: {
+        owner: {
+          select: {
+            id: true,
+            status: true,
+            profile: { select: { displayName: true } },
+          },
+        },
+        partner: {
+          select: {
+            id: true,
+            status: true,
+            profile: { select: { displayName: true } },
+          },
+        },
+      },
+    });
+
+    if (
+      !linkRecord ||
+      linkRecord.ownerUserId === linkRecord.partnerUserId ||
+      linkRecord.owner.status !== 'ACTIVE' ||
+      linkRecord.partner.status !== 'ACTIVE'
+    ) {
+      return { connected: false, link: null, partnerSummary: null };
+    }
+
+    const isVerifiedPartner = linkRecord.partnerUserId === userId;
+    const isVerifiedOwner = linkRecord.ownerUserId === userId;
+
+    if (!isVerifiedPartner && !isVerifiedOwner) {
+      return { connected: false, link: null, partnerSummary: null };
+    }
+
+    const link: PartnerLinkMeta = isVerifiedPartner
+      ? {
+          partnerUserId: linkRecord.ownerUserId,
+          partnerDisplayName: linkRecord.owner.profile?.displayName || 'Kullanıcı',
+          role: 'partner',
+          connectedAt: linkRecord.connectedAt.toISOString(),
+        }
+      : {
+          partnerUserId: linkRecord.partnerUserId,
+          partnerDisplayName: linkRecord.partner.profile?.displayName || 'Partner',
+          role: 'owner',
+          connectedAt: linkRecord.connectedAt.toISOString(),
+        };
+
+    // Strict privacy boundary: ONLY when viewer is the verified partner on a mutual link,
+    // expose high-level phase & support tip for the linked owner.
+    if (!isVerifiedPartner) {
       return { connected: true, link, partnerSummary: null };
     }
 
     const latestCycles = await this.prisma.periodCycle.findMany({
-      where: { userId: link.partnerUserId },
+      where: { userId: linkRecord.ownerUserId },
       orderBy: { startDate: 'desc' },
       take: 3,
       select: { startDate: true },

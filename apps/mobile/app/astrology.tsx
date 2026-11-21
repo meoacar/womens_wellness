@@ -16,7 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '@/hooks/useTheme';
 import { useFeatureFlags } from '@/hooks/useFeatureFlags';
 import { useAuthStore } from '@/store/authStore';
-import { getZodiacSign, ZODIAC_SIGNS, ZodiacSign } from '@/utils/astrology';
+import { getZodiacSign, parseBirthDateSafe, ZODIAC_SIGNS, ZodiacSign } from '@/utils/astrology';
 import { astrologyApi, HoroscopeEntry } from '@/services/astrologyApi';
 
 type Period = 'daily' | 'weekly' | 'monthly';
@@ -61,9 +61,13 @@ export default function AstrologyScreen() {
         staleTime: 5 * 60 * 1000,
     });
 
-    const userBirthDate = user?.profile?.dateOfBirth ? new Date(user.profile.dateOfBirth) : null;
+    const userBirthDate = user?.profile?.dateOfBirth
+        ? parseBirthDateSafe(user.profile.dateOfBirth)
+        : null;
     const derivedSign: ZodiacSign | null =
-        (myChart?.sunSign as ZodiacSign) || (userBirthDate ? getZodiacSign(userBirthDate) : null);
+        (userBirthDate ? getZodiacSign(userBirthDate) : null) ||
+        (myChart?.sunSign as ZodiacSign) ||
+        null;
 
     const activeSign: ZodiacSign = previewSign || derivedSign || 'libra';
     const activeSignInfo = ZODIAC_SIGNS[activeSign];

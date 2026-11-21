@@ -12,8 +12,20 @@ import type {
 } from '@/types/subscription';
 import { authEvents, type AuthEventPayload } from './authEvents';
 import { getApiBaseUrl } from '@/utils/apiBaseUrl';
+import { getClientTelemetryHeaders } from '@/utils/clientTelemetry';
+
+export type RefreshSessionResult =
+  | { ok: true; accessToken: string; refreshToken: string }
+  | {
+      ok: false;
+      status: 'unauthorized' | 'network_error';
+      code?: AuthEventPayload['reason'];
+      message?: string;
+    };
 
 class ApiClient {
+  private refreshPromise: Promise<RefreshSessionResult> | null = null;
+
   private get baseURL(): string {
     return getApiBaseUrl();
   }
@@ -33,7 +45,10 @@ class ApiClient {
     includeAuth = true,
   ): Promise<T> {
     const url = `${this.baseURL}${endpoint}`;
-    const headers: HeadersInit = {};
+    const telemetryHeaders = getClientTelemetryHeaders();
+    const headers: HeadersInit = {
+      ...telemetryHeaders,
+    };
 
     // Only add Authorization header if needed
     if (includeAuth) {
@@ -73,15 +88,14 @@ class ApiClient {
 
     // Only attempt token refresh for authenticated endpoints
     if (response.status === 401 && includeAuth) {
-      // Token expired, try to refresh
-      const refreshResult = await this.refreshToken();
+      // Token expired, try single-flight refresh
+      const refreshResult = await this.refreshSession();
       if (refreshResult.ok) {
         // Retry request with new token
-        const retryHeaders: HeadersInit = {};
-        const newToken = await SecureStore.getItemAsync('accessToken');
-        if (newToken) {
-          retryHeaders['Authorization'] = `Bearer ${newToken}`;
-        }
+        const retryHeaders: HeadersInit = {
+          ...getClientTelemetryHeaders(),
+        };
+        retryHeaders['Authorization'] = `Bearer ${refreshResult.accessToken}`;
         if (options.body) {
           retryHeaders['Content-Type'] = 'application/json';
         }
@@ -108,12 +122,16 @@ class ApiClient {
           throw new Error(error.message || `HTTP ${retryResponse.status}`);
         }
         return retryResponse.json();
-      } else {
+      } else if (refreshResult.status === 'unauthorized') {
         const reason = refreshResult.code || 'SESSION_EXPIRED';
         const message =
           refreshResult.message || 'Oturum süresi doldu. Lütfen tekrar giriş yapın.';
         await this.clearLocalAuth({ reason, message });
         throw new Error(message);
+      } else {
+        throw new Error(
+          refreshResult.message || 'Sunucuya bağlanılamadı. Lütfen bağlantınızı kontrol edin.',
+        );
       }
     }
 
@@ -158,38 +176,89 @@ class ApiClient {
     return this.request<T>(endpoint, { method: 'DELETE' }, includeAuth);
   }
 
-  private async refreshToken(): Promise<{
-    ok: boolean;
-    code?: 'ACCOUNT_SUSPENDED' | 'ACCOUNT_DELETED' | 'SESSION_EXPIRED';
-    message?: string;
-  }> {
+  public async refreshSession(timeoutMs?: number): Promise<RefreshSessionResult> {
+    if (this.refreshPromise) {
+      return this.refreshPromise;
+    }
+
+    this.refreshPromise = this.performRefresh(timeoutMs).finally(() => {
+      this.refreshPromise = null;
+    });
+
+    return this.refreshPromise;
+  }
+
+  private async performRefresh(timeoutMs?: number): Promise<RefreshSessionResult> {
+    const controller = timeoutMs ? new AbortController() : null;
+    const timeoutId =
+      controller && timeoutMs
+        ? setTimeout(() => controller.abort(), timeoutMs)
+        : null;
+
     try {
       const refreshToken = await SecureStore.getItemAsync('refreshToken');
-      if (!refreshToken) return { ok: false, code: 'SESSION_EXPIRED' };
+      if (!refreshToken) {
+        return { ok: false, status: 'unauthorized', code: 'SESSION_EXPIRED' };
+      }
 
       const response = await fetch(`${this.baseURL}/auth/refresh`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...getClientTelemetryHeaders(),
+        },
         body: JSON.stringify({ refreshToken }),
+        signal: controller?.signal,
       });
 
       if (!response.ok) {
         const err = await response.json().catch(() => ({}));
+        if (response.status === 401 || response.status === 403) {
+          return {
+            ok: false,
+            status: 'unauthorized',
+            code: err?.code || 'SESSION_EXPIRED',
+            message: err?.message,
+          };
+        }
+
+        // 5xx or temporary gateway errors must not log the user out
         return {
           ok: false,
-          code: err?.code,
-          message: err?.message,
+          status: 'network_error',
+          message: err?.message || `HTTP ${response.status}`,
         };
       }
 
       const tokens: AuthTokens = await response.json();
+      if (!tokens?.accessToken || !tokens?.refreshToken) {
+        return {
+          ok: false,
+          status: 'network_error',
+          message: 'Geçersiz yenileme yanıtı.',
+        };
+      }
+
       await SecureStore.setItemAsync('accessToken', tokens.accessToken);
       await SecureStore.setItemAsync('refreshToken', tokens.refreshToken);
       authEvents.emit({ reason: 'REFRESHED' });
 
-      return { ok: true };
+      return {
+        ok: true,
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+      };
     } catch {
-      return { ok: false, code: 'SESSION_EXPIRED' };
+      // Transient network error / timeout: never treat as invalid credentials
+      return {
+        ok: false,
+        status: 'network_error',
+        message: 'Ağ hatası nedeniyle oturum yenilenemedi.',
+      };
+    } finally {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
     }
   }
 }
@@ -205,6 +274,14 @@ export const authService = {
     firstName: string;
     lastName: string;
     dateOfBirth?: string; // ISO date string
+    kvkkConsents?: {
+      acceptPrivacy?: boolean;
+      privacyAcceptedAt?: string;
+      aiMemoryOptIn?: boolean;
+      aiMemoryAcceptedAt?: string;
+      version?: string;
+      source?: string;
+    };
   }) => api.post<AuthResponse>('/auth/register', data, false),
 
   login: (data: { identifier: string; password: string }) =>
@@ -246,6 +323,13 @@ export const userService = {
   checkUsernameAvailability: (username: string) => api.get(`/users/check-username?username=${encodeURIComponent(username)}`, false),
   deleteMe: () => api.delete('/me'),
   exportMyData: () => api.get('/me/export'),
+  reportClientError: (payload: {
+    message: string;
+    stack?: string;
+    path?: string;
+    level?: string;
+    metadataJson?: any;
+  }) => api.post<{ logged: boolean }>('/me/client-error', payload).catch(() => ({ logged: false })),
   getRetentionOffer: () =>
     api.get<{
       banner: {
@@ -451,7 +535,7 @@ export const cyclesService = {
     id: string,
     data: {
       startDate?: string;
-      endDate?: string;
+      endDate?: string | null;
       symptoms?: any;
       notes?: string;
     },
@@ -692,7 +776,26 @@ export const remindersService = {
   registerPushToken: (pushToken: string) =>
     api.post('/reminders/push/register', { pushToken }),
 
-  testPush: () => api.post('/reminders/push/test', {}),
+  testPush: () => api.post<{ status: string; id?: string; delivery?: string; message?: string }>('/reminders/push/test', {}),
+
+  getNotificationPreferences: () => api.get<any>('/reminders/preferences'),
+
+  updateNotificationPreferences: (data: any) =>
+    api.patch<any>('/reminders/preferences', data),
+
+  getPendingPushNotifications: () =>
+    api.get<{
+      notifications: Array<{
+        id: string;
+        title: string;
+        body: string;
+        data?: Record<string, any>;
+        createdAt: string;
+      }>;
+    }>('/reminders/push/pending'),
+
+  ackPendingPushNotifications: (ids: string[]) =>
+    api.post<{ acknowledged: number }>('/reminders/push/ack', { ids }),
 
   getPeriodSupportMessages: () =>
     api.get<{
@@ -753,6 +856,7 @@ export const homeService = {
       user: {
         displayName: string;
         profilePictureUrl?: string;
+        lifeStage?: string;
       };
       streak: {
         current: number;
@@ -1321,6 +1425,8 @@ export const pagesService = {
       createdAt: string;
       updatedAt: string;
     }>(`/pages/slug/${slug}`, false), // Public endpoint, no auth needed
+
+  getBySlug: (slug: string) => pagesService.getPageBySlug(slug),
 };
 
 // Admin Panel endpoints
@@ -1459,4 +1565,88 @@ export const adminService = {
       };
       timestamp: string;
     }>('/admin/system/health'),
+};
+
+export type LifeStage = 'CYCLE' | 'FERTILITY' | 'PREGNANCY' | 'POSTPARTUM';
+
+export const postpartumService = {
+  getOverview: () =>
+    api.get<{
+      lifeStage: LifeStage;
+      baby: {
+        id: string;
+        name: string;
+        birthDate: string;
+        gender?: string | null;
+        birthWeightGr?: number | null;
+        birthHeightCm?: number | null;
+        notes?: string | null;
+      } | null;
+      todaySummary: {
+        feedingsCount: number;
+        feedingMinutes: number;
+        formulaMl: number;
+        diapersCount: number;
+        sleepMinutes: number;
+      };
+      feedings: Array<any>;
+      diapers: Array<any>;
+      sleeps: Array<any>;
+      growthLogs: Array<any>;
+      vaccines: Array<{
+        id: string;
+        vaccineCode: string;
+        title: string;
+        dueMonth: number;
+        administeredAt?: string | null;
+        notes?: string | null;
+      }>;
+    }>('/postpartum/overview'),
+
+  getLifeStage: () => api.get<{ lifeStage: LifeStage }>('/postpartum/life-stage'),
+
+  updateLifeStage: (lifeStage: LifeStage) =>
+    api.patch<{ lifeStage: LifeStage }>('/postpartum/life-stage', { lifeStage }),
+
+  upsertBaby: (data: {
+    name: string;
+    birthDate: string;
+    gender?: string;
+    birthWeightGr?: number;
+    birthHeightCm?: number;
+    notes?: string;
+  }) => api.post<any>('/postpartum/baby', data),
+
+  logFeeding: (data: {
+    type: 'BREAST_LEFT' | 'BREAST_RIGHT' | 'PUMP' | 'FORMULA';
+    durationSec?: number;
+    amountMl?: number;
+    startedAt?: string;
+    notes?: string;
+  }) => api.post<any>('/postpartum/feedings', data),
+
+  deleteFeeding: (id: string) => api.delete<any>(`/postpartum/feedings/${id}`),
+
+  logDiaper: (data: { type: 'WET' | 'DIRTY' | 'BOTH'; loggedAt?: string; notes?: string }) =>
+    api.post<any>('/postpartum/diapers', data),
+
+  deleteDiaper: (id: string) => api.delete<any>(`/postpartum/diapers/${id}`),
+
+  logSleep: (data: { durationMin: number; startedAt?: string; endedAt?: string; notes?: string }) =>
+    api.post<any>('/postpartum/sleeps', data),
+
+  deleteSleep: (id: string) => api.delete<any>(`/postpartum/sleeps/${id}`),
+
+  logGrowth: (data: {
+    weightKg?: number;
+    heightCm?: number;
+    headCm?: number;
+    measuredAt?: string;
+    notes?: string;
+  }) => api.post<any>('/postpartum/growth', data),
+
+  deleteGrowth: (id: string) => api.delete<any>(`/postpartum/growth/${id}`),
+
+  toggleVaccine: (id: string, data: { administered: boolean; administeredAt?: string; notes?: string }) =>
+    api.patch<any>(`/postpartum/vaccines/${id}`, data),
 };

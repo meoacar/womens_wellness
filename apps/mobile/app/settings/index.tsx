@@ -21,11 +21,15 @@ import { Ionicons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import * as SecureStore from 'expo-secure-store';
+import * as LocalAuthentication from 'expo-local-authentication';
 import { useAuthStore } from '@/store/authStore';
 import { useThemeStore } from '@/store/themeStore';
-import { userService, qnaService, quotaService } from '@/services/api';
+import { userService, qnaService, quotaService, postpartumService } from '@/services/api';
+import { healthConnectSyncService } from '@/services/healthConnectSync';
+import { pedometerSyncService } from '@/services/pedometerSync';
 import { gamificationService } from '@/services/gamification';
 import { useTheme } from '@/hooks/useTheme';
+import { saveLocalPinHash, clearLocalPinHash } from '@/utils/pinHash';
 import { PinInputModal } from '@/components/PinInputModal';
 import { PremiumBadge } from '@/components/premium/PremiumBadge';
 import { resolveAvatarSource } from '@/utils/avatar';
@@ -84,6 +88,44 @@ export default function SettingsScreen() {
   const [showPinChange, setShowPinChange] = useState(false);
   const [showPinDisable, setShowPinDisable] = useState(false);
   const [pinEnabled, setPinEnabled] = useState(false);
+  const [biometricEnabled, setBiometricEnabled] = useState(false);
+
+  useEffect(() => {
+    SecureStore.getItemAsync('biometricEnabled')
+      .then((val) => setBiometricEnabled(val === 'true'))
+      .catch(() => {});
+  }, []);
+
+  const handleBiometricToggle = async (nextValue: boolean) => {
+    if (!nextValue) {
+      await SecureStore.setItemAsync('biometricEnabled', 'false').catch(() => {});
+      setBiometricEnabled(false);
+      return;
+    }
+    try {
+      const [hasHw, enrolled] = await Promise.all([
+        LocalAuthentication.hasHardwareAsync(),
+        LocalAuthentication.isEnrolledAsync(),
+      ]);
+      if (!hasHw || !enrolled) {
+        Alert.alert(
+          'Biyometrik Doğrulama Bulunamadı',
+          'Cihazınızda kayıtlı parmak izi veya yüz tanıma bulunmuyor.',
+        );
+        return;
+      }
+      const res = await LocalAuthentication.authenticateAsync({
+        promptMessage: 'Parmak izi / Face ID kilidini etkinleştir',
+        fallbackLabel: 'İptal',
+      });
+      if (res.success) {
+        await SecureStore.setItemAsync('biometricEnabled', 'true').catch(() => {});
+        setBiometricEnabled(true);
+      }
+    } catch {
+      Alert.alert('Hata', 'Biyometrik doğrulama başlatılamadı.');
+    }
+  };
 
   const { data: pinStatus } = useQuery({
     queryKey: ['pin-status'],
@@ -97,7 +139,7 @@ export default function SettingsScreen() {
     }
   }, [pinStatus]);
 
-  const profile = (userData as any)?.profile;
+  const profile = (userData as any)?.profile || (user as any)?.profile;
   const fullName =
     profile?.firstName && profile?.lastName
       ? `${profile.firstName} ${profile.lastName}`
@@ -105,7 +147,7 @@ export default function SettingsScreen() {
 
   const zodiacInfo = useMemo(() => {
     if (!profile?.dateOfBirth) return null;
-    const sign = getZodiacSign(new Date(profile.dateOfBirth));
+    const sign = getZodiacSign(profile.dateOfBirth);
     return ZODIAC_SIGNS[sign];
   }, [profile?.dateOfBirth]);
 
@@ -233,7 +275,10 @@ export default function SettingsScreen() {
     await userService.setupPin(pin);
     setPinEnabled(true);
     await SecureStore.setItemAsync('pinEnabled', 'true');
-    await SecureStore.setItemAsync('pinVerified', 'true');
+    await SecureStore.deleteItemAsync('pinVerified').catch(() => undefined);
+    const uid = useAuthStore.getState().user?.id;
+    if (uid) await saveLocalPinHash(uid, pin);
+    useAuthStore.getState().setPinStatus(true, true);
     await queryClient.invalidateQueries({ queryKey: ['pin-status'] });
     Alert.alert('Başarılı', 'PIN kilidi aktif edildi');
   };
@@ -243,6 +288,8 @@ export default function SettingsScreen() {
       throw new Error('Mevcut PIN gereklidir');
     }
     await userService.changePin(currentPin, newPin);
+    const uid = useAuthStore.getState().user?.id;
+    if (uid) await saveLocalPinHash(uid, newPin);
     Alert.alert('Başarılı', 'PIN kodunuz başarıyla güncellendi');
   };
 
@@ -250,7 +297,9 @@ export default function SettingsScreen() {
     await userService.disablePin(pin);
     setPinEnabled(false);
     await SecureStore.setItemAsync('pinEnabled', 'false');
-    await SecureStore.deleteItemAsync('pinVerified');
+    await SecureStore.deleteItemAsync('pinVerified').catch(() => undefined);
+    await clearLocalPinHash();
+    useAuthStore.getState().setPinStatus(false, false);
     await queryClient.invalidateQueries({ queryKey: ['pin-status'] });
     Alert.alert('Başarılı', 'PIN kilidi kaldırıldı');
   };
@@ -668,6 +717,23 @@ export default function SettingsScreen() {
           })}
           {pinEnabled &&
             renderSettingRow({
+              icon: 'finger-print-outline',
+              iconColor: '#8B5CF6',
+              title: 'Parmak İzi / Face ID',
+              subtitle: biometricEnabled
+                ? 'PIN ekranında biyometrik kilit açma aktif'
+                : 'PIN yerine parmak izi ile hızlı aç',
+              rightElement: (
+                <Switch
+                  value={biometricEnabled}
+                  onValueChange={handleBiometricToggle}
+                  trackColor={{ false: theme.colors.border, true: theme.colors.primary }}
+                  thumbColor={Platform.OS === 'ios' ? undefined : '#fff'}
+                />
+              ),
+            })}
+          {pinEnabled &&
+            renderSettingRow({
               icon: 'key-outline',
               iconColor: '#F59E0B',
               title: 'PIN Kodunu Değiştir',
@@ -715,6 +781,102 @@ export default function SettingsScreen() {
         <Text style={styles.groupHeading}>Veri ve Gizlilik</Text>
         <View style={styles.groupedCard}>
           {renderSettingRow({
+            icon: 'heart-circle-outline',
+            iconColor: '#EC4899',
+            title: 'Anne & Bebek Merkezi',
+            subtitle: 'Emzirme, bez, uyku, büyüme & aşı takibi',
+            onPress: () => router.push('/postpartum' as any),
+          })}
+          {renderSettingRow({
+            icon: 'compass-outline',
+            iconColor: '#F59E0B',
+            title: 'Yaşam Evresi Modu',
+            subtitle: 'Döngü, Doğurganlık, Gebelik veya Anne & Bebek',
+            onPress: () => {
+              Alert.alert('Yaşam Evresi Seç', 'Uygulamanın odak modunu seçin:', [
+                {
+                  text: 'Döngü & Wellness',
+                  onPress: () =>
+                    postpartumService
+                      .updateLifeStage('CYCLE')
+                      .then(() => queryClient.invalidateQueries({ queryKey: ['homeSnapshot'] }))
+                      .catch(() => {}),
+                },
+                {
+                  text: 'Doğurganlık (Planlama)',
+                  onPress: () =>
+                    postpartumService
+                      .updateLifeStage('FERTILITY')
+                      .then(() => queryClient.invalidateQueries({ queryKey: ['homeSnapshot'] }))
+                      .catch(() => {}),
+                },
+                {
+                  text: 'Gebelik',
+                  onPress: () =>
+                    postpartumService
+                      .updateLifeStage('PREGNANCY')
+                      .then(() => {
+                        queryClient.invalidateQueries({ queryKey: ['homeSnapshot'] });
+                        router.push('/pregnancy');
+                      })
+                      .catch(() => {}),
+                },
+                {
+                  text: 'Anne & Bebek',
+                  onPress: () =>
+                    postpartumService
+                      .updateLifeStage('POSTPARTUM')
+                      .then(() => {
+                        queryClient.invalidateQueries({ queryKey: ['homeSnapshot'] });
+                        router.push('/postpartum' as any);
+                      })
+                      .catch(() => {}),
+                },
+                { text: 'İptal', style: 'cancel' },
+              ]);
+            },
+          })}
+          {Platform.OS === 'android' &&
+            renderSettingRow({
+              icon: 'watch-outline',
+              iconColor: '#0EA5E9',
+              title: 'Health Connect (Akıllı Saat)',
+              subtitle: 'Saat ve sağlık uygulamasından adım & uyku çek',
+              onPress: async () => {
+                const available = await healthConnectSyncService.isAvailable();
+                if (!available) {
+                  Alert.alert(
+                    'Health Connect Bulunamadı',
+                    'Cihazınızda Health Connect yüklü değil veya desteklenmiyor.',
+                  );
+                  return;
+                }
+                const ok = await healthConnectSyncService.requestPermissions();
+                if (ok) {
+                  await pedometerSyncService.syncNow(true);
+                  const steps = await healthConnectSyncService.getTodaySteps();
+                  Alert.alert(
+                    'Bağlantı Başarılı',
+                    steps != null
+                      ? `Health Connect senkronize edildi. Bugünkü adım: ${steps}`
+                      : 'Health Connect bağlantısı kuruldu.',
+                  );
+                } else {
+                  Alert.alert(
+                    'İzin Gerekli',
+                    'Health Connect izinlerini açmak için ayarlara gitmek ister misiniz?',
+                    [
+                      { text: 'İptal', style: 'cancel' },
+                      {
+                        text: 'Ayarları Aç',
+                        onPress: () => healthConnectSyncService.openSettings(),
+                      },
+                    ],
+                  );
+                }
+              },
+            })}
+          {renderSettingRow({
             icon: 'document-text-outline',
             iconColor: '#8B5CF6',
             title: 'Sağlık & Doktor Raporu',
@@ -749,13 +911,13 @@ export default function SettingsScreen() {
             icon: 'document-text-outline',
             iconColor: '#64748B',
             title: 'Gizlilik Politikası',
-            onPress: () => router.push('/privacy-policy' as any),
+            onPress: () => router.push('/settings/privacy-policy' as any),
           })}
           {renderSettingRow({
             icon: 'reader-outline',
             iconColor: '#64748B',
             title: 'Kullanım Koşulları',
-            onPress: () => router.push('/terms-of-service' as any),
+            onPress: () => router.push('/settings/terms-of-service' as any),
             isLast: true,
           })}
         </View>

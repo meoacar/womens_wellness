@@ -1,0 +1,158 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+  android:id="@+id/astro_widget_root"
+  android:layout_width="match_parent"
+  android:layout_height="match_parent"
+  android:background="@drawable/widget_cosmic_bg"
+  android:orientation="vertical"
+  android:padding="14dp">
+
+  <LinearLayout
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:gravity="center_vertical"
+    android:orientation="horizontal">
+
+    <TextView
+      android:id="@+id/astro_zodiac_pill"
+      android:layout_width="wrap_content"
+      android:layout_height="wrap_content"
+      android:background="@drawable/widget_glass_pill"
+      android:paddingHorizontal="9dp"
+      android:paddingVertical="3dp"
+      android:text="✨ Astroloji"
+      android:textColor="#FFFFFF"
+      android:textSize="11.5sp"
+      android:textStyle="bold" />
+
+    <TextView
+      android:id="@+id/astro_streak_pill"
+      android:layout_width="wrap_content"
+      android:layout_height="wrap_content"
+      android:layout_marginStart="6dp"
+      android:background="@drawable/widget_glass_pill"
+      android:paddingHorizontal="8dp"
+      android:paddingVertical="3dp"
+      android:text="🔥 Seri"
+      android:textColor="#FDE68A"
+      android:textSize="11sp"
+      android:textStyle="bold" />
+
+    <TextView
+      android:id="@+id/astro_updated_at"
+      android:layout_width="0dp"
+      android:layout_height="wrap_content"
+      android:layout_weight="1"
+      android:gravity="end"
+      android:text=""
+      android:textColor="#DDD6FE"
+      android:textSize="10sp" />
+  </LinearLayout>
+
+  <TextView
+    android:id="@+id/astro_headline"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginTop="8dp"
+    android:ellipsize="end"
+    android:maxLines="2"
+    android:text="Bugünkü kozmik enerjin &amp; nefes alanın hazır"
+    android:textColor="#FFFFFF"
+    android:textSize="13.5sp"
+    android:textStyle="bold" />
+
+  <LinearLayout
+    android:layout_width="match_parent"
+    android:layout_height="0dp"
+    android:layout_marginTop="10dp"
+    android:layout_weight="1"
+    android:orientation="horizontal">
+
+    <LinearLayout
+      android:id="@+id/astro_tile_horoscope"
+      android:layout_width="0dp"
+      android:layout_height="match_parent"
+      android:layout_marginEnd="6dp"
+      android:layout_weight="1"
+      android:background="@drawable/widget_cosmic_tile"
+      android:gravity="center_vertical"
+      android:orientation="vertical"
+      android:paddingHorizontal="10dp"
+      android:paddingVertical="8dp">
+
+      <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="✨ Burç Yorumu"
+        android:textColor="#FBCFE8"
+        android:textSize="11sp"
+        android:textStyle="bold" />
+
+      <TextView
+        android:id="@+id/astro_sign_value"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:text="Günlük Burç"
+        android:textColor="#FFFFFF"
+        android:textSize="13.5sp"
+        android:textStyle="bold" />
+
+      <TextView
+        android:id="@+id/astro_sign_sub"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:text="Yorumu oku →"
+        android:textColor="#E9D5FF"
+        android:textSize="10sp" />
+    </LinearLayout>
+
+    <LinearLayout
+      android:id="@+id/astro_tile_meditation"
+      android:layout_width="0dp"
+      android:layout_height="match_parent"
+      android:layout_marginStart="6dp"
+      android:layout_weight="1"
+      android:background="@drawable/widget_cosmic_tile"
+      android:gravity="center_vertical"
+      android:orientation="vertical"
+      android:paddingHorizontal="10dp"
+      android:paddingVertical="8dp">
+
+      <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="🧘 Meditasyon"
+        android:textColor="#C4B5FD"
+        android:textSize="11sp"
+        android:textStyle="bold" />
+
+      <TextView
+        android:id="@+id/astro_meditation_value"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:text="0 / 10 dk"
+        android:textColor="#FFFFFF"
+        android:textSize="13.5sp"
+        android:textStyle="bold" />
+
+      <TextView
+        android:id="@+id/astro_meditation_sub"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:text="Müzik &amp; nefes aç →"
+        android:textColor="#E9D5FF"
+        android:textSize="10sp" />
+    </LinearLayout>
+  </LinearLayout>
+
+</LinearLayout>

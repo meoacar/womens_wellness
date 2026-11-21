@@ -6,15 +6,30 @@ import { Navbar } from '@/components/Navbar';
 import { Footer } from '@/components/Footer';
 import { DownloadModal } from '@/components/DownloadModal';
 import { publicApi, type Locale, type SiteSummary } from '@/lib/api';
+import { SITE_URL, getRouteMeta } from '@/lib/i18n';
+import { buildSeoMetadata, buildSiteJsonLd } from '@/lib/seo';
 
-export const metadata: Metadata = {
-  title: 'Kadın Atlası — Döngü, Hamilelik, Wellness ve NOVA AI Asistanı',
-  description:
-    'Regl ve yumurtlama takibi, hafta hafta hamilelik rehberi, günlük su ve 4-7-8 nefes egzersizleri ile bütüncül kadın sağlığı platformu.',
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const cookieStore = await cookies();
+  const locale: Locale = cookieStore.get('web_locale')?.value === 'en' ? 'en' : 'tr';
+  const meta = getRouteMeta('/', locale);
+  return {
+    metadataBase: new URL(SITE_URL),
+    ...buildSeoMetadata({
+      title: meta.title,
+      description: meta.description,
+      canonical: meta.canonical,
+      locale,
+    }),
+    icons: {
+      icon: '/images/mascots/2.png',
+      apple: '/images/mascots/2.png',
+    },
+  };
+}
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  const cookieStore = cookies();
+  const cookieStore = await cookies();
   const cookieLocale = cookieStore.get('web_locale')?.value;
   const initialLocale: Locale = cookieLocale === 'en' ? 'en' : 'tr';
 
@@ -26,8 +41,12 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   }
 
   return (
-    <html lang={initialLocale}>
+    <html lang={initialLocale} suppressHydrationWarning>
       <body className="min-h-screen font-sans antialiased">
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(buildSiteJsonLd()) }}
+        />
         <AppProvider
           initialLocale={initialLocale}
           storeLinks={summary?.storeLinks}

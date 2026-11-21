@@ -65,10 +65,10 @@ Supabase PostgreSQL database'ine tüm tablolar oluşturuldu:
 # apps/api/.env.production
 
 # Direct connection (migrations için)
-DATABASE_URL="postgresql://postgres.ujaynuggtchjstzuuevu:Djcoder-0539@aws-1-eu-west-1.pooler.supabase.com:5432/postgres"
+DATABASE_URL="postgresql://postgres.<PROJECT_REF>:<ROTATED_DB_PASSWORD>@aws-1-eu-west-1.pooler.supabase.com:5432/postgres"
 
 # Connection pooling (uygulama için)
-DATABASE_POOL_URL="postgresql://postgres.ujaynuggtchjstzuuevu:Djcoder-0539@aws-1-eu-west-1.pooler.supabase.com:6543/postgres?pgbouncer=true"
+DATABASE_POOL_URL="postgresql://postgres.<PROJECT_REF>:<ROTATED_DB_PASSWORD>@aws-1-eu-west-1.pooler.supabase.com:6543/postgres?pgbouncer=true"
 ```
 
 ---

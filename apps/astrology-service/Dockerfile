@@ -1,24 +1,33 @@
-FROM python:3.11-slim
+# Builder stage (expects monorepo root build context `.`)
+FROM python:3.11-slim AS builder
 
 WORKDIR /app
 
-# Install system dependencies
 RUN apt-get update && \
     apt-get install -y --no-install-recommends gcc && \
     rm -rf /var/lib/apt/lists/*
 
-# Copy requirements and install Python dependencies
 COPY apps/astrology-service/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip wheel --no-cache-dir --wheel-dir /wheels -r requirements.txt
 
-# Copy application code
+# Production stage
+FROM python:3.11-slim AS production
+
+WORKDIR /app
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends curl && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /wheels /wheels
+COPY apps/astrology-service/requirements.txt .
+RUN pip install --no-cache-dir --no-index --find-links=/wheels -r requirements.txt && \
+    rm -rf /wheels
+
 COPY apps/astrology-service/ .
 
-# Create cache directory
-RUN mkdir -p cache && chmod 777 cache
-
-# Create non-root user
-RUN useradd -m -u 1001 astrology && \
+RUN mkdir -p cache && \
+    useradd -m -u 1001 astrology && \
     chown -R astrology:astrology /app
 
 USER astrology

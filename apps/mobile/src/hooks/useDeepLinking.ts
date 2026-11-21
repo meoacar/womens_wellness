@@ -41,15 +41,22 @@ export function useDeepLinking() {
 
             console.log('[DeepLink] Parsed:', { hostname, path, queryParams });
 
-            // Handle different deep link routes
-            // When launched normally in Expo Go (e.g. exp://127.0.0.1:8081), path is null/empty;
-            // let index.tsx handle initial auth routing instead of forcing navigation on mount.
-            if (!path || path === '/' || path === '--/') {
+            // Ignore empty Expo Go launch URLs (exp://127.0.0.1:8081)
+            const isExpoGoUrl = url.startsWith('exp://');
+            if (isExpoGoUrl && (!path || path === '/' || path === '--/')) {
                 return;
             }
 
-            // Remove leading slash
-            const cleanPath = path.startsWith('/') ? path.slice(1) : path;
+            // Remove leading slash or fallback to custom-scheme hostname (e.g. wellness://calendar)
+            const rawClean = path && path !== '/' && path !== '--/'
+                ? (path.startsWith('/') ? path.slice(1) : path)
+                : '';
+            const cleanPath =
+                rawClean || (hostname && hostname !== 'kadinatlasi.com' ? hostname : '');
+
+            if (!cleanPath) {
+                return;
+            }
 
             switch (cleanPath) {
                 // Ana ekranlar

@@ -2,14 +2,35 @@
 
 import React, { useState } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, Clock, Share2, Check, Smartphone } from 'lucide-react';
+import {
+  ArrowLeft,
+  Clock,
+  Share2,
+  Check,
+  Smartphone,
+  ShieldCheck,
+  UserCheck,
+  ChevronDown,
+  ExternalLink,
+  BookOpen,
+} from 'lucide-react';
 import type { PublicArticle } from '@/lib/api';
 import { useAppContext } from './AppContext';
-import { CATEGORY_LABELS } from '@/lib/i18n';
+import { CATEGORY_LABELS, formatTagLabel } from '@/lib/i18n';
+import { getAuthorProfile, getCategoryReferences } from '@/lib/articleMeta';
+import { MarkdownContent } from './MarkdownContent';
 
 export function ArticleDetailClient({ article }: { article: PublicArticle }) {
   const { locale, t, openDownloadModal } = useAppContext();
   const [copied, setCopied] = useState(false);
+  const [authorOpen, setAuthorOpen] = useState(false);
+
+  const authorProfile = getAuthorProfile(article.author);
+  const references = getCategoryReferences(article.category, locale);
+  const reviewDateStr = new Date(article.updatedAt || article.publishedAt).toLocaleDateString(
+    locale === 'tr' ? 'tr-TR' : 'en-US',
+    { day: 'numeric', month: 'long', year: 'numeric' },
+  );
 
   const title =
     locale === 'en' && article.titleEn ? article.titleEn : article.titleTr || article.title;
@@ -18,6 +39,12 @@ export function ArticleDetailClient({ article }: { article: PublicArticle }) {
       ? article.contentEn
       : article.contentTr || article.content || article.excerpt;
   const catLabel = CATEGORY_LABELS[locale][article.category] || article.category;
+
+  React.useEffect(() => {
+    if (typeof document !== 'undefined' && title) {
+      document.title = `${title} — Kadın Atlası`;
+    }
+  }, [title, locale]);
 
   const handleShare = async () => {
     const url = typeof window !== 'undefined' ? window.location.href : '';
@@ -70,28 +97,107 @@ export function ArticleDetailClient({ article }: { article: PublicArticle }) {
         {title}
       </h1>
 
-      <div className="mt-4 flex items-center gap-3 text-xs text-[var(--text-muted)]">
-        {article.author && <span>✍️ {article.author}</span>}
+      <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-[var(--text-muted)]">
+        <button
+          type="button"
+          onClick={() => setAuthorOpen((prev) => !prev)}
+          aria-expanded={authorOpen}
+          className="inline-flex items-center gap-1.5 rounded-full border border-[var(--border-soft)] bg-[var(--bg-card)] px-3 py-1 font-bold text-[var(--text-main)] transition hover:border-[#FF69B4]"
+        >
+          <UserCheck className="h-3.5 w-3.5 text-[#7C3AED]" />
+          <span>{authorProfile.name}</span>
+          <ChevronDown
+            className={`h-3.5 w-3.5 text-[var(--text-muted)] transition-transform ${
+              authorOpen ? 'rotate-180' : ''
+            }`}
+          />
+        </button>
+
+        <span className="inline-flex items-center gap-1.5">
+          <ShieldCheck className="h-3.5 w-3.5 text-emerald-500" />
+          <span>
+            {locale === 'tr' ? 'Tıbbi İnceleme:' : 'Medical Review:'}{' '}
+            <strong className="font-semibold text-[var(--text-main)]">
+              {locale === 'tr' ? authorProfile.reviewerTr : authorProfile.reviewerEn}
+            </strong>
+          </span>
+        </span>
+
         <span>
-          📅{' '}
-          {new Date(article.publishedAt).toLocaleDateString(
-            locale === 'tr' ? 'tr-TR' : 'en-US',
-            { day: 'numeric', month: 'long', year: 'numeric' },
-          )}
+          {locale === 'tr' ? 'İnceleme Tarihi:' : 'Reviewed:'} {reviewDateStr}
         </span>
       </div>
 
-      <div className="mt-8 space-y-4 rounded-3xl border border-[var(--border-soft)] bg-[var(--bg-card)] p-6 text-base leading-relaxed text-[var(--text-main)] sm:p-8">
-        {content.split('\n').map((paragraph, i) =>
-          paragraph.trim() ? (
-            <p key={i} className="whitespace-pre-line">
-              {paragraph}
-            </p>
-          ) : (
-            <div key={i} className="h-2" />
-          ),
-        )}
+      {authorOpen && (
+        <div className="mt-4 rounded-2xl border border-[#FFD4E7] bg-[#FFF0F5]/60 p-4 text-xs leading-relaxed dark:border-[#3b254a] dark:bg-[#231731]">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <div className="text-sm font-extrabold text-[var(--text-main)]">
+                {authorProfile.name}
+              </div>
+              <div className="font-semibold text-[#E91E63] dark:text-[#FF69B4]">
+                {locale === 'tr' ? authorProfile.roleTr : authorProfile.roleEn}
+              </div>
+            </div>
+            <Link
+              href="/iletisim"
+              className="rounded-lg border border-[var(--border-soft)] bg-[var(--bg-card)] px-3 py-1 font-bold text-[#7C3AED] hover:border-[#7C3AED]"
+            >
+              {locale === 'tr' ? 'Editoryal İletişim' : 'Editorial Contact'}
+            </Link>
+          </div>
+          <p className="mt-2 text-[var(--text-muted)]">
+            {locale === 'tr' ? authorProfile.bioTr : authorProfile.bioEn}
+          </p>
+          <div className="mt-2.5 border-t border-[var(--border-soft)] pt-2 text-[11px] text-[var(--text-muted)]">
+            {locale === 'tr'
+              ? `Tıbbi doğrulama (${reviewDateStr}): ${authorProfile.reviewerTr} tarafından uluslararası klinik kılavuzlar (ACOG, WHO, NHS, NIH) referans alınarak incelenmiştir. Bilgilendirme amaçlıdır; tanı ve tedavi yerine geçmez.`
+              : `Medical verification (${reviewDateStr}): Reviewed by ${authorProfile.reviewerEn} against international clinical guidelines (ACOG, WHO, NHS, NIH). Informational only; does not replace medical advice.`}
+          </div>
+        </div>
+      )}
+
+      <div className="mt-8 rounded-3xl border border-[var(--border-soft)] bg-[var(--bg-card)] p-6 sm:p-8">
+        <MarkdownContent content={content} />
       </div>
+
+      {/* Scientific References */}
+      <section className="mt-6 rounded-3xl border border-[var(--border-soft)] bg-[var(--bg-card)] p-6">
+        <div className="flex items-center gap-2 text-sm font-extrabold text-[var(--text-main)]">
+          <BookOpen className="h-4 w-4 text-[#7C3AED]" />
+          <span>
+            {locale === 'tr' ? 'Kaynakça ve Bilimsel Referanslar' : 'Sources & Clinical References'}
+          </span>
+        </div>
+        <p className="mt-1 text-xs text-[var(--text-muted)]">
+          {locale === 'tr'
+            ? 'Bu rehberde yer alan temel klinik bilgiler aşağıdaki uluslararası sağlık otoritelerinin rehberleri doğrultusunda derlenmiştir:'
+            : 'Core clinical facts in this guide are aligned with publications from the following public health authorities:'}
+        </p>
+        <ul className="mt-4 space-y-2.5">
+          {references.map((ref, idx) => (
+            <li key={ref.url}>
+              <a
+                href={ref.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center justify-between gap-3 rounded-2xl border border-[var(--border-soft)] bg-[var(--bg-page)] px-4 py-3 text-xs transition hover:border-[#FF69B4]"
+              >
+                <span className="flex items-center gap-2.5">
+                  <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#FFF0F5] text-[11px] font-extrabold text-[#E91E63] dark:bg-[#2a1936] dark:text-[#FF69B4]">
+                    {idx + 1}
+                  </span>
+                  <span className="rounded-md bg-purple-500/15 px-2 py-0.5 text-[10px] font-extrabold text-[#7C3AED]">
+                    {ref.org}
+                  </span>
+                  <span className="font-semibold text-[var(--text-main)]">{ref.title}</span>
+                </span>
+                <ExternalLink className="h-3.5 w-3.5 shrink-0 text-[var(--text-muted)]" />
+              </a>
+            </li>
+          ))}
+        </ul>
+      </section>
 
       {article.tags && article.tags.length > 0 && (
         <div className="mt-6 flex flex-wrap gap-2">
@@ -100,7 +206,7 @@ export function ArticleDetailClient({ article }: { article: PublicArticle }) {
               key={tag}
               className="rounded-full border border-[var(--border-soft)] bg-[var(--bg-card)] px-3 py-1 text-xs font-medium text-[var(--text-muted)]"
             >
-              #{tag}
+              #{formatTagLabel(tag, locale)}
             </span>
           ))}
         </div>

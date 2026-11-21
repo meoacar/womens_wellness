@@ -197,6 +197,15 @@ export async function syncPeriodNotifications(options: {
         }));
 
   const quietEnabled = (await AsyncStorage.getItem('@quiet_hours_enabled')) === 'true';
+  const quietStartRaw = await AsyncStorage.getItem('@quiet_hours_start');
+  const quietEndRaw = await AsyncStorage.getItem('@quiet_hours_end');
+  const quietStartHour = quietStartRaw ? Number(quietStartRaw.split(':')[0]) : 23;
+  const quietEndHour = quietEndRaw ? Number(quietEndRaw.split(':')[0]) : 8;
+  const qStart = Number.isFinite(quietStartHour) ? quietStartHour : 23;
+  const qEnd = Number.isFinite(quietEndHour) ? quietEndHour : 8;
+  const isQuietHour = (h: number) =>
+    quietEnabled && (qStart > qEnd ? h >= qStart || h < qEnd : h >= qStart && h < qEnd);
+
   const discreetMode =
     (await AsyncStorage.getItem('@discreet_period_notifications')) === 'true';
   const todayStr = new Date().toISOString().slice(0, 10);
@@ -206,7 +215,7 @@ export async function syncPeriodNotifications(options: {
     config?.updatedAt || 'local',
     maxPerDay,
     sendHours.join(','),
-    quietEnabled ? 'q1' : 'q0',
+    quietEnabled ? `q1:${qStart}-${qEnd}` : 'q0',
     discreetMode ? 'd1' : 'd0',
   ].join('|');
 
@@ -223,7 +232,7 @@ export async function syncPeriodNotifications(options: {
   for (let dayOffset = 0; dayOffset < remainingDays; dayOffset++) {
     const targetCycleDay = effectiveCycleDay + dayOffset;
     const validHours = sendHours
-      .filter((h) => !(quietEnabled && (h >= 23 || h < 8)))
+      .filter((h) => !isQuietHour(h))
       .slice(0, maxPerDay);
 
     const msgs = selectMessagesForDay(
@@ -263,6 +272,7 @@ export async function syncPeriodNotifications(options: {
           },
           trigger: {
             type: Notifications.SchedulableTriggerInputTypes.DATE,
+            channelId: 'period-support',
             date: triggerDate,
           },
         });

@@ -28,7 +28,7 @@ import {
 import { api } from '@/services/api';
 
 const TOTAL_STEPS = 6;
-const DEFAULT_PICKER_DATE = new Date(1998, 0, 1);
+const DEFAULT_PICKER_DATE = new Date(1998, 0, 1, 12, 0, 0);
 
 function getAgeFromDate(date: Date): number {
   const today = new Date();
@@ -431,10 +431,28 @@ export default function IdentityStep() {
                               if (Platform.OS === 'android') {
                                 setShowDatePicker(false);
                                 if (selectedDate) {
-                                  onChange(selectedDate);
+                                  onChange(
+                                    new Date(
+                                      selectedDate.getFullYear(),
+                                      selectedDate.getMonth(),
+                                      selectedDate.getDate(),
+                                      12,
+                                      0,
+                                      0
+                                    )
+                                  );
                                 }
                               } else if (selectedDate) {
-                                setTempBirthDate(selectedDate);
+                                setTempBirthDate(
+                                  new Date(
+                                    selectedDate.getFullYear(),
+                                    selectedDate.getMonth(),
+                                    selectedDate.getDate(),
+                                    12,
+                                    0,
+                                    0
+                                  )
+                                );
                               }
                             }}
                           />

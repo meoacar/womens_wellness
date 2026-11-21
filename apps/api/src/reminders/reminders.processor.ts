@@ -1,9 +1,10 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
-import { Logger } from '@nestjs/common';
+import { Logger, Optional } from '@nestjs/common';
 import { Job } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
 import { PushService } from './push.service';
 import { ReminderSchedulerService } from './scheduler.service';
+import { MonitoringService } from '../common/monitoring/monitoring.service';
 
 @Processor('reminders')
 export class RemindersProcessor extends WorkerHost {
@@ -13,6 +14,7 @@ export class RemindersProcessor extends WorkerHost {
     private prisma: PrismaService,
     private pushService: PushService,
     private scheduler: ReminderSchedulerService,
+    @Optional() private readonly monitoring?: MonitoringService,
   ) {
     super();
   }
@@ -53,8 +55,8 @@ export class RemindersProcessor extends WorkerHost {
         3, // max retries
       );
 
-      if (result.status === 'ok') {
-        this.logger.log(`Push sent successfully: ${result.id}`);
+      if (result.status === 'ok' || result.status === 'queued') {
+        this.logger.log(`Push processed (${result.status}): ${result.id}`);
 
         // Calculate next run and reschedule
         const nextRunAt = this.scheduler.calculateNextRun(
@@ -83,6 +85,11 @@ export class RemindersProcessor extends WorkerHost {
         this.logger.error(
           `Failed to send push for reminder ${reminderId}: ${result.message}`,
         );
+        await this.monitoring?.recordFailure(
+          'push_notification',
+          `Reminder ${reminderId} push failed after retries: ${result.message}`,
+          { reminderId, userId },
+        );
 
         // Still reschedule for next occurrence
         const nextRunAt = this.scheduler.calculateNextRun(
@@ -110,6 +117,12 @@ export class RemindersProcessor extends WorkerHost {
     } catch (error: any) {
       this.logger.error(
         `Error processing reminder ${reminderId}: ${error.message}`,
+      );
+      await this.monitoring?.recordFailure(
+        'redis_queue',
+        `Reminder queue job ${reminderId} failed: ${error?.message || error}`,
+        { reminderId, userId },
+        error,
       );
       throw error; // Let BullMQ handle retry
     }

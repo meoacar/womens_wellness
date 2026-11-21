@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -9,7 +9,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { useTheme } from '@/hooks/useTheme';
 import { gamificationService } from '@/services/gamification';
 import type { DailyTasksResponse } from '@/types/gamification';
@@ -44,18 +44,28 @@ export function DailyHabitSection({ cyclePhase, isAuthenticated }: DailyHabitSec
   const router = useRouter();
   const queryClient = useQueryClient();
 
-  const { data: dailyTasks } = useQuery<DailyTasksResponse>({
+  const { data: dailyTasks, refetch: refetchDailyTasks } = useQuery<DailyTasksResponse>({
     queryKey: ['dailyTasks'],
     queryFn: () => gamificationService.getDailyTasks(),
     enabled: isAuthenticated,
-    staleTime: 30000,
+    staleTime: 0,
+    refetchOnMount: 'always',
   });
+
+  useFocusEffect(
+    useCallback(() => {
+      if (isAuthenticated) {
+        refetchDailyTasks();
+      }
+    }, [isAuthenticated, refetchDailyTasks]),
+  );
 
   const [mood, setMood] = useState<string>('happy');
   const [energy, setEnergy] = useState<number>(3);
   const [symptoms, setSymptoms] = useState<string[]>([]);
   const [addWater250, setAddWater250] = useState<boolean>(true);
   const [expandedForm, setExpandedForm] = useState<boolean>(false);
+  const [activeTab, setActiveTab] = useState<'tasks' | 'checkin' | 'phase'>('tasks');
 
   useEffect(() => {
     if (dailyTasks?.todayCheckin) {
@@ -109,32 +119,128 @@ export function DailyHabitSection({ cyclePhase, isAuthenticated }: DailyHabitSec
 
   return (
     <View style={styles.container}>
-      {/* 5-Second Daily Check-in Card */}
       <View style={styles.card}>
-        <View style={styles.cardHeaderRow}>
-          <View style={styles.titleRow}>
-            <Text style={styles.cardEmoji}>⚡</Text>
-            <View>
-              <Text style={styles.cardTitle}>5 Saniyelik Check-in</Text>
-              <Text style={styles.cardSubtitle}>
-                {checkedIn
-                  ? 'Bugünkü check-in tamamlandı ✓'
-                  : 'Bugün nasıl hissediyorsun? (+15 XP)'}
-              </Text>
-            </View>
-          </View>
+        {/* Compact Segmented Tab Switcher */}
+        <View style={styles.segmentBar}>
           <TouchableOpacity
-            style={styles.toggleBtn}
-            onPress={() => setExpandedForm((prev) => !prev)}
+            style={[styles.segmentBtn, activeTab === 'tasks' && styles.segmentBtnActive]}
+            onPress={() => setActiveTab('tasks')}
+            activeOpacity={0.8}
           >
-            <Text style={styles.toggleBtnText}>
-              {expandedForm ? 'Gizle' : checkedIn ? 'Güncelle' : 'Aç'}
+            <Text style={[styles.segmentText, activeTab === 'tasks' && styles.segmentTextActive]}>
+              Görevler ({completedCount}/{totalCount})
             </Text>
           </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.segmentBtn, activeTab === 'checkin' && styles.segmentBtnActive]}
+            onPress={() => {
+              setActiveTab('checkin');
+              setExpandedForm(true);
+            }}
+            activeOpacity={0.8}
+          >
+            <Text style={[styles.segmentText, activeTab === 'checkin' && styles.segmentTextActive]}>
+              {checkedIn ? 'Check-in ✓' : 'Check-in'}
+            </Text>
+          </TouchableOpacity>
+
+          {cyclePhase && (
+            <TouchableOpacity
+              style={[styles.segmentBtn, activeTab === 'phase' && styles.segmentBtnActive]}
+              onPress={() => setActiveTab('phase')}
+              activeOpacity={0.8}
+            >
+              <Text style={[styles.segmentText, activeTab === 'phase' && styles.segmentTextActive]}>
+                Faz Rehberi
+              </Text>
+            </TouchableOpacity>
+          )}
         </View>
 
-        {expandedForm && (
-          <View style={styles.formBody}>
+        {/* Tab 1: Today's 3 Mini Tasks */}
+        {activeTab === 'tasks' && dailyTasks && (
+          <View style={styles.tabBody}>
+            <View style={styles.cardHeaderRow}>
+              <View style={styles.titleRow}>
+                <View>
+                  <Text style={styles.cardTitle}>Bugünün 3 Mini Görevi</Text>
+                  <Text style={styles.cardSubtitle}>
+                    {dailyTasks.allCompleted
+                      ? 'Tebrikler! +20 XP günlük bonus kazandın'
+                      : `3/3 tamamlayınca +${dailyTasks.bonusXp} XP ekstra bonus`}
+                  </Text>
+                </View>
+              </View>
+              <View style={styles.progressPill}>
+                <Text style={styles.progressPillText}>
+                  {completedCount}/{totalCount}
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.progressTrack}>
+              <View
+                style={[
+                  styles.progressFill,
+                  { width: `${Math.round((completedCount / Math.max(1, totalCount)) * 100)}%` },
+                ]}
+              />
+            </View>
+
+            <View style={styles.tasksList}>
+              {dailyTasks.tasks.map((task) => (
+                <TouchableOpacity
+                  key={task.id}
+                  style={[styles.taskRow, task.completed && styles.taskRowDone]}
+                  onPress={() => {
+                    if (task.id === 'checkin') {
+                      setExpandedForm(true);
+                      setActiveTab('checkin');
+                    } else {
+                      router.push(task.actionRoute as any);
+                    }
+                  }}
+                >
+                  <Ionicons
+                    name={task.completed ? 'checkmark-circle' : 'ellipse-outline'}
+                    size={20}
+                    color={task.completed ? '#10B981' : theme.colors.textSecondary}
+                  />
+                  <View style={styles.taskContent}>
+                    <Text style={[styles.taskTitle, task.completed && styles.taskTitleDone]}>
+                      {task.title}
+                    </Text>
+                    <Text style={styles.taskDesc} numberOfLines={1}>
+                      {task.description}
+                    </Text>
+                  </View>
+                  <View style={styles.xpBadge}>
+                    <Text style={styles.xpBadgeText}>+{task.xp} XP</Text>
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        )}
+
+        {/* Tab 2: 5-Second Daily Check-in */}
+        {activeTab === 'checkin' && (
+          <View style={styles.tabBody}>
+            <View style={styles.cardHeaderRow}>
+              <View style={styles.titleRow}>
+                <View>
+                  <Text style={styles.cardTitle}>5 Saniyelik Check-in</Text>
+                  <Text style={styles.cardSubtitle}>
+                    {checkedIn
+                      ? 'Bugünkü check-in tamamlandı ✓'
+                      : 'Bugün nasıl hissediyorsun? (+15 XP)'}
+                  </Text>
+                </View>
+              </View>
+            </View>
+
+            <View style={styles.formBody}>
             <Text style={styles.fieldLabel}>Ruh Halin</Text>
             <View style={styles.moodRow}>
               {MOOD_OPTIONS.map((opt) => {
@@ -198,7 +304,7 @@ export function DailyHabitSection({ cyclePhase, isAuthenticated }: DailyHabitSec
                   color={theme.colors.primary}
                 />
                 <Text style={styles.waterToggleText}>
-                  Check-in ile +250 ml su bardağı da ekle 💧
+                  Check-in ile +200 ml su bardağı da ekle 💧
                 </Text>
               </TouchableOpacity>
             )}
@@ -217,112 +323,48 @@ export function DailyHabitSection({ cyclePhase, isAuthenticated }: DailyHabitSec
               )}
             </TouchableOpacity>
           </View>
+          </View>
+        )}
+
+        {/* Tab 3: Cycle Phase Guidance */}
+        {activeTab === 'phase' && cyclePhase && (
+          <View style={styles.tabBody}>
+            <View style={styles.cardHeaderRow}>
+              <View style={styles.titleRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.cardTitle}>Döngü Fazı Rehberi</Text>
+                  <Text style={[styles.phaseTitle, { color: cyclePhase.color }]}>
+                    {cyclePhase.title}
+                  </Text>
+                </View>
+              </View>
+            </View>
+            <Text style={styles.phaseSummary}>{cyclePhase.summary}</Text>
+
+            <View style={styles.tipBox}>
+              <Text style={styles.tipLabel}>Beslenme İpucu</Text>
+              <Text style={styles.tipText}>{cyclePhase.nutritionTip}</Text>
+            </View>
+            <View style={styles.tipBox}>
+              <Text style={styles.tipLabel}>Egzersiz & Bakım</Text>
+              <Text style={styles.tipText}>{cyclePhase.exerciseTip}</Text>
+            </View>
+
+            <TouchableOpacity
+              style={styles.novaButton}
+              onPress={() =>
+                router.push({
+                  pathname: '/(tabs)/chat',
+                  params: { prompt: cyclePhase.novaPrompt },
+                } as any)
+              }
+            >
+              <Ionicons name="sparkles" size={16} color="#FFFFFF" />
+              <Text style={styles.novaButtonText}>Bu Faz İçin NOVA&apos;ya Sor</Text>
+            </TouchableOpacity>
+          </View>
         )}
       </View>
-
-      {/* Today's 3 Mini Tasks */}
-      {dailyTasks && (
-        <View style={styles.card}>
-          <View style={styles.cardHeaderRow}>
-            <View style={styles.titleRow}>
-              <Text style={styles.cardEmoji}>🎯</Text>
-              <View>
-                <Text style={styles.cardTitle}>Bugünün 3 Mini Görevi</Text>
-                <Text style={styles.cardSubtitle}>
-                  {dailyTasks.allCompleted
-                    ? 'Tebrikler! +20 XP günlük bonus kazandın 🎉'
-                    : `3/3 tamamlayınca +${dailyTasks.bonusXp} XP ekstra bonus`}
-                </Text>
-              </View>
-            </View>
-            <View style={styles.progressPill}>
-              <Text style={styles.progressPillText}>
-                {completedCount}/{totalCount}
-              </Text>
-            </View>
-          </View>
-
-          <View style={styles.progressTrack}>
-            <View
-              style={[
-                styles.progressFill,
-                { width: `${Math.round((completedCount / Math.max(1, totalCount)) * 100)}%` },
-              ]}
-            />
-          </View>
-
-          <View style={styles.tasksList}>
-            {dailyTasks.tasks.map((task) => (
-              <TouchableOpacity
-                key={task.id}
-                style={[styles.taskRow, task.completed && styles.taskRowDone]}
-                onPress={() => {
-                  if (task.id === 'checkin') {
-                    setExpandedForm(true);
-                  } else {
-                    router.push(task.actionRoute as any);
-                  }
-                }}
-              >
-                <Ionicons
-                  name={task.completed ? 'checkmark-circle' : 'ellipse-outline'}
-                  size={22}
-                  color={task.completed ? '#10B981' : theme.colors.textSecondary}
-                />
-                <View style={styles.taskContent}>
-                  <Text style={[styles.taskTitle, task.completed && styles.taskTitleDone]}>
-                    {task.title}
-                  </Text>
-                  <Text style={styles.taskDesc}>{task.description}</Text>
-                </View>
-                <View style={styles.xpBadge}>
-                  <Text style={styles.xpBadgeText}>+{task.xp} XP</Text>
-                </View>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </View>
-      )}
-
-      {/* Cycle Phase Guidance Card */}
-      {cyclePhase && (
-        <View style={[styles.card, { borderLeftWidth: 4, borderLeftColor: cyclePhase.color }]}>
-          <View style={styles.cardHeaderRow}>
-            <View style={styles.titleRow}>
-              <Text style={styles.cardEmoji}>🌙</Text>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.cardTitle}>Döngü Fazı Rehberi</Text>
-                <Text style={[styles.phaseTitle, { color: cyclePhase.color }]}>
-                  {cyclePhase.title}
-                </Text>
-              </View>
-            </View>
-          </View>
-          <Text style={styles.phaseSummary}>{cyclePhase.summary}</Text>
-
-          <View style={styles.tipBox}>
-            <Text style={styles.tipLabel}>🥗 Beslenme İpucu</Text>
-            <Text style={styles.tipText}>{cyclePhase.nutritionTip}</Text>
-          </View>
-          <View style={styles.tipBox}>
-            <Text style={styles.tipLabel}>🧘‍♀️ Egzersiz & Bakım</Text>
-            <Text style={styles.tipText}>{cyclePhase.exerciseTip}</Text>
-          </View>
-
-          <TouchableOpacity
-            style={styles.novaButton}
-            onPress={() =>
-              router.push({
-                pathname: '/(tabs)/chat',
-                params: { prompt: cyclePhase.novaPrompt },
-              } as any)
-            }
-          >
-            <Ionicons name="sparkles" size={16} color="#FFFFFF" />
-            <Text style={styles.novaButtonText}>Bu Faz İçin NOVA&apos;ya Sor</Text>
-          </TouchableOpacity>
-        </View>
-      )}
     </View>
   );
 }
@@ -330,16 +372,48 @@ export function DailyHabitSection({ cyclePhase, isAuthenticated }: DailyHabitSec
 const createStyles = (theme: any) =>
   StyleSheet.create({
     container: {
-      paddingHorizontal: 16,
-      gap: 14,
-      marginTop: 8,
+      paddingHorizontal: 20,
+      marginBottom: 20,
     },
     card: {
       backgroundColor: theme.colors.backgroundCard,
-      borderRadius: 16,
-      padding: 16,
+      borderRadius: 20,
+      padding: 15,
       borderWidth: 1,
       borderColor: theme.colors.border,
+    },
+    segmentBar: {
+      flexDirection: 'row',
+      backgroundColor: theme.colors.background,
+      borderRadius: 12,
+      padding: 3,
+      gap: 4,
+      marginBottom: 12,
+    },
+    segmentBtn: {
+      flex: 1,
+      paddingVertical: 7,
+      paddingHorizontal: 8,
+      borderRadius: 9,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    segmentBtnActive: {
+      backgroundColor: theme.colors.backgroundCard,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+    },
+    segmentText: {
+      fontSize: 11.5,
+      fontWeight: '600',
+      color: theme.colors.textSecondary,
+    },
+    segmentTextActive: {
+      color: theme.colors.primary,
+      fontWeight: '800',
+    },
+    tabBody: {
+      gap: 4,
     },
     cardHeaderRow: {
       flexDirection: 'row',

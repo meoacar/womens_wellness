@@ -18,6 +18,7 @@ import { MemoryModule } from './memory/memory.module';
 import { QuotaModule } from './quota/quota.module';
 import { CyclesModule } from './cycles/cycles.module';
 import { PregnancyModule } from './pregnancy/pregnancy.module';
+import { PostpartumModule } from './postpartum/postpartum.module';
 import { RemindersModule } from './reminders/reminders.module';
 import { ModelPolicyModule } from './model-policy/model-policy.module';
 import { FeatureFlagModule } from './feature-flag/feature-flag.module';
@@ -33,6 +34,7 @@ import { AstrologyModule } from './astrology/astrology.module';
 import { AIProviderModule } from './ai-provider/ai-provider.module';
 import { AdminModule } from './admin/admin.module';
 import { PartnerModule } from './partner/partner.module';
+import { MonitoringModule } from './common/monitoring/monitoring.module';
 import aiConfig from './config/ai.config';
 
 @Module({
@@ -58,6 +60,10 @@ import aiConfig from './config/ai.config';
         password: process.env.REDIS_PASSWORD,
       },
     }),
+    BullModule.registerQueue({
+      name: 'reminders',
+    }),
+    MonitoringModule,
     // Scheduled jobs
     ScheduleModule.forRoot(),
     PrismaModule,
@@ -71,6 +77,7 @@ import aiConfig from './config/ai.config';
     QuotaModule,
     CyclesModule,
     PregnancyModule,
+    PostpartumModule,
     RemindersModule,
     ModelPolicyModule,
     FeatureFlagModule,

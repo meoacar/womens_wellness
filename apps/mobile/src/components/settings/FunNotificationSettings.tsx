@@ -1,8 +1,18 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, Switch, TouchableOpacity, AppState, AppStateStatus } from 'react-native';
-import * as Notifications from 'expo-notifications';
+import { View, Text, StyleSheet, Switch, TouchableOpacity, AppState, AppStateStatus, Alert } from 'react-native';
 import { useTheme } from '@/hooks/useTheme';
+import { useAuthStore } from '@/store/authStore';
 import { useFunNotificationStore } from '@/store/funNotificationStore';
+import { remindersService } from '@/services/api';
+import {
+    getOsNotificationPermissionStatus,
+    loadLocalNotificationSettings,
+    registerPushTokenWithBackend,
+    requestOsNotificationPermission,
+    saveLocalNotificationSettings,
+    sendFunTestLocalNotification,
+    syncFunLocalNotifications,
+} from '@/services/notificationEngine';
 import { NotificationPermissionPrompt } from '../notifications/NotificationPermissionPrompt';
 
 export function FunNotificationSettings() {
@@ -40,17 +50,50 @@ export function FunNotificationSettings() {
 
     const checkPermission = async () => {
         try {
-            const { status } = await Notifications.getPermissionsAsync();
-            const granted = status === 'granted';
-            setHasPermission(granted);
-
-            // İzin yoksa bildirimleri otomatik kapat
-            if (!granted && preferences.enabled) {
-                setEnabled(false);
-            }
+            const perm = await getOsNotificationPermissionStatus();
+            setHasPermission(perm.granted);
         } catch (error) {
             console.error('İzin kontrolü hatası:', error);
             setHasPermission(false);
+        }
+    };
+
+    useEffect(() => {
+        syncFunLocalNotifications().catch(() => {});
+        loadLocalNotificationSettings()
+            .then((local) => {
+                if (local.funNotifications !== preferences.enabled) {
+                    return saveLocalNotificationSettings({
+                        ...local,
+                        funNotifications: preferences.enabled,
+                        periodReminders: preferences.periodSupportNotifications,
+                    });
+                }
+            })
+            .catch(() => {});
+
+        if (useAuthStore.getState().isAuthenticated) {
+            remindersService
+                .updateNotificationPreferences({
+                    funNotifications: preferences.enabled,
+                    periodReminders: preferences.periodSupportNotifications,
+                })
+                .catch(() => {});
+        }
+    }, [
+        hasPermission,
+        preferences.enabled,
+        preferences.frequency,
+        preferences.motivationNotifications,
+        preferences.randomNotifications,
+        preferences.periodSupportNotifications,
+    ]);
+
+    const handleSendFunTest = async () => {
+        const chosen = await sendFunTestLocalNotification();
+        if (chosen) {
+            setHasPermission(true);
+            Alert.alert('Test Bildirimi Gönderildi', `${chosen.titleTr}\n${chosen.messageTr}`);
         }
     };
 
@@ -96,26 +139,33 @@ export function FunNotificationSettings() {
                     value={hasPermission && preferences.enabled}
                     onValueChange={async (value) => {
                         if (!hasPermission && value) {
-                            // İzin yoksa ve açmaya çalışıyorsa, izin iste
-                            const { status } = await Notifications.requestPermissionsAsync();
-                            if (status === 'granted') {
+                            const req = await requestOsNotificationPermission({ showSettingsPrompt: true });
+                            if (req.granted) {
                                 setHasPermission(true);
                                 setEnabled(true);
+                                registerPushTokenWithBackend().catch(() => {});
                             } else {
-                                // İzin verilmedi, switch kapalı kalsın
                                 setHasPermission(false);
                                 setEnabled(false);
                             }
                         } else if (hasPermission) {
-                            // İzin varsa normal toggle
                             setEnabled(value);
                         }
                     }}
-                    disabled={!hasPermission && preferences.enabled}
                     trackColor={{ false: theme.colors.border, true: theme.colors.primary }}
                     thumbColor={theme.colors.backgroundCard}
                 />
             </View>
+
+            <TouchableOpacity
+                style={styles.testFunButton}
+                onPress={handleSendFunTest}
+                activeOpacity={0.85}
+            >
+                <Text style={styles.testFunButtonText}>
+                    🎭 Şimdi Test Mizah Bildirimi Gönder
+                </Text>
+            </TouchableOpacity>
 
             {preferences.enabled && (
                 <>
@@ -332,5 +382,18 @@ const createStyles = (theme: any) => StyleSheet.create({
     frequencyButtonTextActive: {
         color: theme.colors.primary,
         fontWeight: '600',
+    },
+    testFunButton: {
+        marginTop: 10,
+        backgroundColor: theme.colors.primary,
+        borderRadius: 12,
+        paddingVertical: 12,
+        paddingHorizontal: 16,
+        alignItems: 'center',
+    },
+    testFunButtonText: {
+        color: '#FFFFFF',
+        fontSize: 14,
+        fontWeight: '700',
     },
 });

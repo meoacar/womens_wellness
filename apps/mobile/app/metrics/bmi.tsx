@@ -5,6 +5,7 @@ import { useRouter } from 'expo-router';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { metricsService } from '@/services/api';
 import { useTheme } from '@/hooks/useTheme';
+import { validateHeightCm, validateWeightKg } from '@/utils/numberInput';
 
 export default function BMICalculatorScreen() {
     const theme = useTheme();
@@ -28,19 +29,18 @@ export default function BMICalculatorScreen() {
     });
 
     const handleCalculate = () => {
-        const h = parseFloat(height);
-        const w = parseFloat(weight);
-
-        if (isNaN(h) || h <= 0) {
-            Alert.alert('Hata', 'Lütfen geçerli bir boy değeri girin');
+        const heightCheck = validateHeightCm(height);
+        if (heightCheck.error || !heightCheck.value) {
+            Alert.alert('Hata', heightCheck.error || 'Lütfen geçerli bir boy değeri girin');
             return;
         }
-        if (isNaN(w) || w <= 0) {
-            Alert.alert('Hata', 'Lütfen geçerli bir kilo değeri girin');
+        const weightCheck = validateWeightKg(weight);
+        if (weightCheck.error || !weightCheck.value) {
+            Alert.alert('Hata', weightCheck.error || 'Lütfen geçerli bir kilo değeri girin');
             return;
         }
 
-        calculateBMIMutation.mutate({ heightCm: h, weightKg: w });
+        calculateBMIMutation.mutate({ heightCm: heightCheck.value, weightKg: weightCheck.value });
     };
 
     const getCategoryInfo = (category: string) => {
@@ -136,7 +136,7 @@ export default function BMICalculatorScreen() {
                             <View style={styles.idealWeightContent}>
                                 <View style={styles.weightRangeBox}>
                                     <Text style={styles.weightValue}>
-                                        {(18.5 * Math.pow((result.heightCm || parseFloat(height)) / 100, 2)).toFixed(1)}
+                                        {(18.5 * Math.pow(result.heightCm / 100, 2)).toFixed(1)}
                                     </Text>
                                     <Text style={styles.weightUnit}>kg</Text>
                                 </View>
@@ -145,13 +145,13 @@ export default function BMICalculatorScreen() {
                                 </View>
                                 <View style={styles.weightRangeBox}>
                                     <Text style={styles.weightValue}>
-                                        {(24.9 * Math.pow((result.heightCm || parseFloat(height)) / 100, 2)).toFixed(1)}
+                                        {(24.9 * Math.pow(result.heightCm / 100, 2)).toFixed(1)}
                                     </Text>
                                     <Text style={styles.weightUnit}>kg</Text>
                                 </View>
                             </View>
                             <Text style={styles.idealWeightSubtext}>
-                                {parseFloat(height)} cm boy için normal BMI aralığı
+                                {result.heightCm} cm boy için normal BMI aralığı
                             </Text>
                         </View>
 

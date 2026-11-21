@@ -15,6 +15,8 @@ interface SleepTileProps {
   } | null;
 }
 
+const SLEEP_ACCENT = '#6366F1';
+
 export const SleepTile: React.FC<SleepTileProps> = ({ data }) => {
   const theme = useTheme();
   const router = useRouter();
@@ -25,7 +27,6 @@ export const SleepTile: React.FC<SleepTileProps> = ({ data }) => {
 
   const logSleepMutation = useMutation({
     mutationFn: (params: { durationMin: number; quality?: 'good' | 'medium' | 'poor' }) => {
-      // Get yesterday's date at midnight in UTC (matching backend logic)
       const now = new Date();
       const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0));
       const yesterday = new Date(today);
@@ -41,6 +42,8 @@ export const SleepTile: React.FC<SleepTileProps> = ({ data }) => {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['homeSnapshot'] });
       queryClient.invalidateQueries({ queryKey: ['sleep'] });
+      queryClient.invalidateQueries({ queryKey: ['dailyTasks'] });
+      queryClient.invalidateQueries({ queryKey: ['gamification'] });
       setModalVisible(false);
       setHoursInput('');
       setSelectedQuality(undefined);
@@ -51,7 +54,7 @@ export const SleepTile: React.FC<SleepTileProps> = ({ data }) => {
   });
 
   const handleQuickLog = (hours: number) => {
-    logSleepMutation.mutate({ durationMin: hours * 60 });
+    logSleepMutation.mutate({ durationMin: Math.round(hours * 60) });
   };
 
   const handleManualSave = () => {
@@ -66,206 +69,182 @@ export const SleepTile: React.FC<SleepTileProps> = ({ data }) => {
   const formatHours = (minutes: number) => {
     const hours = Math.floor(minutes / 60);
     const mins = minutes % 60;
-    if (mins === 0) return `${hours} s`;
-    return `${hours} s ${mins} dk`;
+    if (mins === 0) return `${hours} sa`;
+    return `${hours} sa ${mins} dk`;
   };
 
   const getQualityLabel = (quality?: string) => {
-    if (!quality) return '';
-    const labels = { good: 'iyi', medium: 'orta', poor: 'zayıf' };
-    return labels[quality as keyof typeof labels] || '';
+    if (!quality) return 'Dün gece';
+    const labels = { good: 'İyi uyku 😊', medium: 'Orta uyku 😐', poor: 'Zayıf uyku 😴' };
+    return labels[quality as keyof typeof labels] || 'Dün gece';
   };
 
-  const getQualityEmoji = (quality?: string) => {
-    if (!quality) return '';
-    const emojis = { good: '😊', medium: '😐', poor: '😴' };
-    return emojis[quality as keyof typeof emojis] || '';
-  };
+  const s = styles(theme);
+  const gradient: readonly [string, string] = theme.isDark
+    ? ['rgba(99,102,241,0.16)', 'rgba(139,92,246,0.08)']
+    : ['#EEF2FF', '#FFFFFF'];
+
+  const renderModal = () => (
+    <Modal
+      visible={modalVisible}
+      transparent
+      animationType="fade"
+      onRequestClose={() => setModalVisible(false)}
+    >
+      <View style={s.modalOverlay}>
+        <View style={s.modalContent}>
+          <Text style={s.modalTitle}>Dün Gece Uykusu</Text>
+          <Text style={s.modalSubtitle}>Hızlı seç veya süreyi gir</Text>
+
+          <View style={s.presetsContainer}>
+            {[6, 7, 7.5, 8].map((h) => (
+              <TouchableOpacity
+                key={h}
+                style={s.presetButton}
+                onPress={() => handleQuickLog(h)}
+              >
+                <Text style={s.presetButtonText}>{h} s</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          <View style={s.inputContainer}>
+            <Text style={s.inputLabel}>veya manuel girin (saat)</Text>
+            <TextInput
+              style={s.input}
+              value={hoursInput}
+              onChangeText={setHoursInput}
+              placeholder="Örn: 7.5"
+              placeholderTextColor={theme.colors.textSecondary}
+              keyboardType="decimal-pad"
+            />
+          </View>
+
+          <View style={s.qualityContainer}>
+            <Text style={s.inputLabel}>Uyku Kalitesi (opsiyonel)</Text>
+            <View style={s.qualityButtons}>
+              {(
+                [
+                  { key: 'good', label: '😊 İyi' },
+                  { key: 'medium', label: '😐 Orta' },
+                  { key: 'poor', label: '😴 Zayıf' },
+                ] as const
+              ).map((q) => (
+                <TouchableOpacity
+                  key={q.key}
+                  style={[
+                    s.qualityButton,
+                    selectedQuality === q.key && s.qualityButtonSelected,
+                  ]}
+                  onPress={() => setSelectedQuality(q.key)}
+                >
+                  <Text
+                    style={[
+                      s.qualityButtonText,
+                      selectedQuality === q.key && { color: SLEEP_ACCENT },
+                    ]}
+                  >
+                    {q.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+
+          <View style={s.modalButtons}>
+            <TouchableOpacity
+              style={[s.modalButton, s.cancelButton]}
+              onPress={() => {
+                setModalVisible(false);
+                setHoursInput('');
+                setSelectedQuality(undefined);
+              }}
+            >
+              <Text style={s.cancelButtonText}>İptal</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[s.modalButton, s.saveButton]}
+              onPress={handleManualSave}
+              disabled={logSleepMutation.isPending || !hoursInput}
+            >
+              <Text style={s.saveButtonText}>
+                {logSleepMutation.isPending ? 'Kaydediliyor...' : 'Kaydet'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
 
   if (!data) {
     return (
-      <WellnessTile
-        icon="😴"
-        title="Uyku"
-        value="-"
-        isEmpty
-        emptyState="Dün gece kaydı yok"
-        onPress={() => router.push('/wellness/sleep')}
-        actions={
-          <View style={styles(theme).actionsRow}>
-            <TouchableOpacity
-              style={styles(theme).quickButton}
-              onPress={(e) => {
-                e.stopPropagation();
-                handleQuickLog(7);
-              }}
-            >
-              <Text style={styles(theme).quickButtonText}>7 s</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles(theme).quickButton}
-              onPress={(e) => {
-                e.stopPropagation();
-                handleQuickLog(8);
-              }}
-            >
-              <Text style={styles(theme).quickButtonText}>8 s</Text>
-            </TouchableOpacity>
-          </View>
-        }
-      />
+      <>
+        <WellnessTile
+          ionicon="moon-outline"
+          title="Uyku"
+          value="-"
+          isEmpty
+          emptyState="Dün gece uyku kaydı yok"
+          accentColor={SLEEP_ACCENT}
+          gradientColors={gradient}
+          onPress={() => router.push('/wellness/sleep')}
+          actions={
+            <View style={s.actionsRow}>
+              <TouchableOpacity
+                style={s.quickButton}
+                onPress={(e) => {
+                  e.stopPropagation();
+                  handleQuickLog(7);
+                }}
+              >
+                <Text style={s.quickButtonText}>7 s</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={s.quickButton}
+                onPress={(e) => {
+                  e.stopPropagation();
+                  handleQuickLog(8);
+                }}
+              >
+                <Text style={s.quickButtonText}>8 s</Text>
+              </TouchableOpacity>
+            </View>
+          }
+        />
+        {renderModal()}
+      </>
     );
   }
 
   return (
     <>
       <WellnessTile
-        icon="😴"
+        ionicon="moon-outline"
         title="Uyku"
-        subtitle={data.quality ? `Kalite: ${getQualityLabel(data.quality)} ${getQualityEmoji(data.quality)}` : undefined}
+        subtitle={getQualityLabel(data.quality)}
         value={formatHours(data.lastNightMin)}
-        target={`Hedef ${data.goalHours} s`}
+        target={`Hedef ${data.goalHours} saat`}
         percentage={data.percentage}
+        accentColor={SLEEP_ACCENT}
+        gradientColors={gradient}
         onPress={() => router.push('/wellness/sleep')}
         actions={
-          <View style={styles(theme).actionsRow}>
+          <View style={s.actionsRow}>
             <TouchableOpacity
-              style={styles(theme).smallButton}
+              style={s.quickButton}
               onPress={(e) => {
                 e.stopPropagation();
                 setModalVisible(true);
               }}
             >
-              <Text style={styles(theme).smallButtonText}>Düzenle</Text>
+              <Text style={s.quickButtonText}>Düzenle / Ekle</Text>
             </TouchableOpacity>
           </View>
         }
       />
-
-      {/* Manual Entry Modal */}
-      <Modal
-        visible={modalVisible}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setModalVisible(false)}
-      >
-        <View style={styles(theme).modalOverlay}>
-          <View style={styles(theme).modalContent}>
-            <Text style={styles(theme).modalTitle}>Uyku Ekle</Text>
-            <Text style={styles(theme).modalSubtitle}>Dün gece</Text>
-
-            {/* Quick Presets */}
-            <View style={styles(theme).presetsContainer}>
-              <TouchableOpacity
-                style={styles(theme).presetButton}
-                onPress={(e) => {
-                  e.stopPropagation();
-                  handleQuickLog(5);
-                }}
-              >
-                <Text style={styles(theme).presetButtonText}>5 s</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles(theme).presetButton}
-                onPress={(e) => {
-                  e.stopPropagation();
-                  handleQuickLog(6);
-                }}
-              >
-                <Text style={styles(theme).presetButtonText}>6 s</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles(theme).presetButton}
-                onPress={(e) => {
-                  e.stopPropagation();
-                  handleQuickLog(7);
-                }}
-              >
-                <Text style={styles(theme).presetButtonText}>7 s</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles(theme).presetButton}
-                onPress={(e) => {
-                  e.stopPropagation();
-                  handleQuickLog(8);
-                }}
-              >
-                <Text style={styles(theme).presetButtonText}>8 s</Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* Manual Input */}
-            <View style={styles(theme).inputContainer}>
-              <Text style={styles(theme).inputLabel}>veya manuel girin (saat)</Text>
-              <TextInput
-                style={styles(theme).input}
-                value={hoursInput}
-                onChangeText={setHoursInput}
-                placeholder="ör: 7.5"
-                placeholderTextColor={theme.colors.textSecondary}
-                keyboardType="decimal-pad"
-              />
-            </View>
-
-            {/* Quality Selection */}
-            <View style={styles(theme).qualityContainer}>
-              <Text style={styles(theme).inputLabel}>Kalite (opsiyonel)</Text>
-              <View style={styles(theme).qualityButtons}>
-                <TouchableOpacity
-                  style={[
-                    styles(theme).qualityButton,
-                    selectedQuality === 'good' && styles(theme).qualityButtonSelected,
-                  ]}
-                  onPress={() => setSelectedQuality('good')}
-                >
-                  <Text style={styles(theme).qualityButtonText}>😊 İyi</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[
-                    styles(theme).qualityButton,
-                    selectedQuality === 'medium' && styles(theme).qualityButtonSelected,
-                  ]}
-                  onPress={() => setSelectedQuality('medium')}
-                >
-                  <Text style={styles(theme).qualityButtonText}>😐 Orta</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[
-                    styles(theme).qualityButton,
-                    selectedQuality === 'poor' && styles(theme).qualityButtonSelected,
-                  ]}
-                  onPress={() => setSelectedQuality('poor')}
-                >
-                  <Text style={styles(theme).qualityButtonText}>😴 Zayıf</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-
-            <View style={styles(theme).modalButtons}>
-              <TouchableOpacity
-                style={[styles(theme).modalButton, styles(theme).cancelButton]}
-                onPress={() => {
-                  setModalVisible(false);
-                  setHoursInput('');
-                  setSelectedQuality(undefined);
-                }}
-              >
-                <Text style={styles(theme).cancelButtonText}>İptal</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles(theme).modalButton, styles(theme).saveButton]}
-                onPress={handleManualSave}
-                disabled={logSleepMutation.isPending || !hoursInput}
-              >
-                <Text style={styles(theme).saveButtonText}>
-                  {logSleepMutation.isPending ? 'Kaydediliyor...' : 'Kaydet'}
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
+      {renderModal()}
     </>
   );
 };
@@ -277,91 +256,86 @@ const styles = (theme: ReturnType<typeof useTheme>) =>
       gap: 6,
     },
     quickButton: {
-      backgroundColor: theme.colors.backgroundSecondary,
-      paddingVertical: 6,
-      paddingHorizontal: 12,
-      borderRadius: 6,
+      flex: 1,
+      backgroundColor: 'rgba(99, 102, 241, 0.14)',
+      paddingVertical: 7,
+      paddingHorizontal: 10,
+      borderRadius: 10,
+      alignItems: 'center',
+      borderWidth: 1,
+      borderColor: 'rgba(99, 102, 241, 0.3)',
     },
     quickButtonText: {
-      fontSize: 11,
-      fontWeight: '600',
-      color: theme.colors.text,
-    },
-    smallButton: {
-      backgroundColor: theme.colors.backgroundSecondary,
-      paddingVertical: 6,
-      paddingHorizontal: 10,
-      borderRadius: 6,
-    },
-    smallButtonText: {
-      fontSize: 11,
-      fontWeight: '600',
-      color: theme.colors.text,
+      fontSize: 11.5,
+      fontWeight: '700',
+      color: SLEEP_ACCENT,
     },
     modalOverlay: {
       flex: 1,
-      backgroundColor: 'rgba(0, 0, 0, 0.5)',
+      backgroundColor: 'rgba(15, 10, 25, 0.55)',
       justifyContent: 'center',
       alignItems: 'center',
-      padding: theme.spacing.lg,
+      padding: 20,
     },
     modalContent: {
-      backgroundColor: theme.colors.background,
-      borderRadius: 16,
-      padding: theme.spacing.lg,
+      backgroundColor: theme.colors.backgroundCard,
+      borderRadius: 24,
+      padding: 22,
       width: '100%',
       maxWidth: 400,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
     },
     modalTitle: {
-      fontSize: 20,
-      fontWeight: '700',
+      fontSize: 19,
+      fontWeight: '800',
       color: theme.colors.text,
       marginBottom: 4,
     },
     modalSubtitle: {
-      fontSize: 14,
+      fontSize: 13,
       color: theme.colors.textSecondary,
-      marginBottom: theme.spacing.md,
+      marginBottom: 14,
     },
     presetsContainer: {
       flexDirection: 'row',
       gap: 8,
-      marginBottom: theme.spacing.lg,
+      marginBottom: 16,
     },
     presetButton: {
       flex: 1,
-      backgroundColor: theme.colors.backgroundCard,
-      paddingVertical: 12,
-      borderRadius: 8,
+      backgroundColor: 'rgba(99, 102, 241, 0.12)',
+      paddingVertical: 11,
+      borderRadius: 12,
       alignItems: 'center',
       borderWidth: 1,
-      borderColor: theme.colors.border,
+      borderColor: 'rgba(99, 102, 241, 0.3)',
     },
     presetButtonText: {
       fontSize: 14,
-      fontWeight: '600',
-      color: theme.colors.text,
+      fontWeight: '700',
+      color: SLEEP_ACCENT,
     },
     inputContainer: {
-      marginBottom: theme.spacing.md,
+      marginBottom: 16,
     },
     inputLabel: {
-      fontSize: 12,
+      fontSize: 13,
       fontWeight: '600',
       color: theme.colors.textSecondary,
-      marginBottom: theme.spacing.sm,
+      marginBottom: 8,
     },
     input: {
-      backgroundColor: theme.colors.backgroundCard,
+      backgroundColor: theme.isDark ? '#141418' : '#F9FAFB',
       borderWidth: 1,
       borderColor: theme.colors.border,
       borderRadius: 12,
-      padding: theme.spacing.md,
+      padding: 14,
       fontSize: 16,
       color: theme.colors.text,
     },
     qualityContainer: {
-      marginBottom: theme.spacing.lg,
+      marginBottom: 18,
     },
     qualityButtons: {
       flexDirection: 'row',
@@ -369,29 +343,29 @@ const styles = (theme: ReturnType<typeof useTheme>) =>
     },
     qualityButton: {
       flex: 1,
-      backgroundColor: theme.colors.backgroundCard,
+      backgroundColor: theme.colors.backgroundSecondary,
       paddingVertical: 10,
-      borderRadius: 8,
+      borderRadius: 12,
       alignItems: 'center',
       borderWidth: 1,
       borderColor: theme.colors.border,
     },
     qualityButtonSelected: {
-      backgroundColor: theme.colors.primary + '20',
-      borderColor: theme.colors.primary,
+      backgroundColor: 'rgba(99, 102, 241, 0.14)',
+      borderColor: SLEEP_ACCENT,
     },
     qualityButtonText: {
-      fontSize: 12,
+      fontSize: 12.5,
       fontWeight: '600',
       color: theme.colors.text,
     },
     modalButtons: {
       flexDirection: 'row',
-      gap: 12,
+      gap: 10,
     },
     modalButton: {
       flex: 1,
-      paddingVertical: 14,
+      paddingVertical: 13,
       borderRadius: 12,
       alignItems: 'center',
     },
@@ -399,16 +373,16 @@ const styles = (theme: ReturnType<typeof useTheme>) =>
       backgroundColor: theme.colors.backgroundSecondary,
     },
     cancelButtonText: {
-      fontSize: 16,
+      fontSize: 15,
       fontWeight: '600',
       color: theme.colors.text,
     },
     saveButton: {
-      backgroundColor: theme.colors.primary,
+      backgroundColor: SLEEP_ACCENT,
     },
     saveButtonText: {
-      fontSize: 16,
-      fontWeight: '600',
-      color: theme.colors.textOnPrimary,
+      fontSize: 15,
+      fontWeight: '700',
+      color: '#FFFFFF',
     },
   });

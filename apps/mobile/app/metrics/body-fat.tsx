@@ -3,6 +3,12 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useState } from 'react';
 import { useRouter } from 'expo-router';
 import { useTheme } from '@/hooks/useTheme';
+import {
+    parseLocaleNumber,
+    validateAgeYears,
+    validateHeightCm,
+    validateWeightKg,
+} from '@/utils/numberInput';
 
 export default function BodyFatCalculatorScreen() {
     const theme = useTheme();
@@ -16,41 +22,53 @@ export default function BodyFatCalculatorScreen() {
     const [result, setResult] = useState<any>(null);
 
     const handleCalculate = () => {
-        const h = parseFloat(height);
-        const w = parseFloat(weight);
-        const a = parseInt(age);
-        const n = parseFloat(neck);
-        const wa = parseFloat(waist);
-        const hi = parseFloat(hip);
+        const heightCheck = validateHeightCm(height);
+        if (heightCheck.error || !heightCheck.value) {
+            Alert.alert('Hata', heightCheck.error || 'Lütfen geçerli bir boy değeri girin');
+            return;
+        }
+        const weightCheck = validateWeightKg(weight);
+        if (weightCheck.error || !weightCheck.value) {
+            Alert.alert('Hata', weightCheck.error || 'Lütfen geçerli bir kilo değeri girin');
+            return;
+        }
+        const ageCheck = validateAgeYears(age);
+        if (ageCheck.error || !ageCheck.value) {
+            Alert.alert('Hata', ageCheck.error || 'Lütfen geçerli bir yaş değeri girin');
+            return;
+        }
 
-        if (isNaN(h) || h <= 0) {
-            Alert.alert('Hata', 'Lütfen geçerli bir boy değeri girin');
+        const h = heightCheck.value;
+        const w = weightCheck.value;
+        const n = parseLocaleNumber(neck);
+        const wa = parseLocaleNumber(waist);
+        const hi = parseLocaleNumber(hip);
+
+        if (isNaN(n) || n < 20 || n > 70) {
+            Alert.alert('Hata', 'Lütfen geçerli bir boyun çevresi girin (20-70 cm)');
             return;
         }
-        if (isNaN(w) || w <= 0) {
-            Alert.alert('Hata', 'Lütfen geçerli bir kilo değeri girin');
+        if (isNaN(wa) || wa < 40 || wa > 200) {
+            Alert.alert('Hata', 'Lütfen geçerli bir bel çevresi girin (40-200 cm)');
             return;
         }
-        if (isNaN(a) || a <= 0) {
-            Alert.alert('Hata', 'Lütfen geçerli bir yaş değeri girin');
+        if (isNaN(hi) || hi < 50 || hi > 220) {
+            Alert.alert('Hata', 'Lütfen geçerli bir kalça çevresi girin (50-220 cm)');
             return;
         }
-        if (isNaN(n) || n <= 0) {
-            Alert.alert('Hata', 'Lütfen geçerli bir boyun çevresi girin');
-            return;
-        }
-        if (isNaN(wa) || wa <= 0) {
-            Alert.alert('Hata', 'Lütfen geçerli bir bel çevresi girin');
-            return;
-        }
-        if (isNaN(hi) || hi <= 0) {
-            Alert.alert('Hata', 'Lütfen geçerli bir kalça çevresi girin');
+        if (wa + hi - n <= 0) {
+            Alert.alert('Hata', 'Bel ve kalça çevresi toplamı boyun çevresinden büyük olmalıdır');
             return;
         }
 
         // US Navy Method for women
         const bodyFatPercentage =
             495 / (1.29579 - 0.35004 * Math.log10(wa + hi - n) + 0.22100 * Math.log10(h)) - 450;
+
+        if (!Number.isFinite(bodyFatPercentage) || bodyFatPercentage < 2 || bodyFatPercentage > 75) {
+            Alert.alert('Hata', 'Girdiğiniz ölçüm değerleri geçerli aralık dışında. Lütfen cm cinsinden ölçümleri kontrol edin.');
+            return;
+        }
 
         const fatMass = (bodyFatPercentage / 100) * w;
         const leanMass = w - fatMass;

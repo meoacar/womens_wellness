@@ -74,6 +74,7 @@ export class DiscoverService {
                     titleTr: true,
                     titleEn: true,
                     excerpt: true,
+                    contentEn: true,
                     category: true,
                     tags: true,
                     imageUrl: true,
@@ -179,6 +180,7 @@ export class DiscoverService {
                     titleTr: true,
                     titleEn: true,
                     excerpt: true,
+                    contentEn: true,
                     category: true,
                     tags: true,
                     imageUrl: true,
@@ -290,6 +292,7 @@ export class DiscoverService {
                 contentTr: article.contentTr,
                 contentEn: article.contentEn || undefined,
                 author: article.author || undefined,
+                updatedAt: article.updatedAt,
                 expiresAt: article.expiresAt || undefined,
                 relatedArticles: relatedArticles.map((a) => {
                     const relatedInteraction = relatedInteractionMap.get(a.id);
@@ -557,18 +560,44 @@ export class DiscoverService {
     }
 
     // Helper: Format article to card DTO
+    private buildExcerptFromMarkdown(markdown: string, maxLen = 175): string {
+        const lines = (markdown || '')
+            .replace(/\r\n/g, '\n')
+            .split('\n')
+            .map((l) => l.trim())
+            .filter((l) => l.length > 0 && !l.startsWith('#'));
+
+        const plain = lines
+            .join(' ')
+            .replace(/\*\*([^*]+)\*\*/g, '$1')
+            .replace(/\*([^*]+)\*/g, '$1')
+            .replace(/^[-*]\s+/gm, '')
+            .replace(/\s+/g, ' ')
+            .trim();
+
+        if (plain.length <= maxLen) return plain;
+        const cut = plain.slice(0, maxLen);
+        const lastSpace = cut.lastIndexOf(' ');
+        return `${(lastSpace > 80 ? cut.slice(0, lastSpace) : cut).trim()}…`;
+    }
+
     private formatArticleCard(
         article: any,
         locale: string,
         interaction?: any,
     ): ArticleCardDto {
+        const excerpt =
+            locale === 'en' && article.contentEn
+                ? this.buildExcerptFromMarkdown(article.contentEn)
+                : article.excerpt || '';
+
         return {
             id: article.id,
             title:
                 locale === 'en' && article.titleEn ? article.titleEn : article.titleTr,
             titleTr: article.titleTr,
             titleEn: article.titleEn || undefined,
-            excerpt: article.excerpt || '',
+            excerpt,
             category: article.category,
             tags: article.tags,
             imageUrl: article.imageUrl || undefined,

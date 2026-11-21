@@ -11,6 +11,7 @@ import { Server, Socket } from 'socket.io';
 import { UseGuards } from '@nestjs/common';
 import { AdminService } from './admin.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { createCorsOriginValidator, resolveAllowedOrigins } from '../common/utils/cors';
 
 /**
  * WebSocket Gateway for Real-time Admin Updates
@@ -24,7 +25,7 @@ import { PrismaService } from '../prisma/prisma.service';
 @WebSocketGateway({
     namespace: '/admin',
     cors: {
-        origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+        origin: createCorsOriginValidator(resolveAllowedOrigins()),
         credentials: true,
     },
 })
@@ -174,20 +175,11 @@ export class AdminGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
             const user = await this.prisma.user.findUnique({
                 where: { id: userId },
-                select: { id: true, email: true, isAdmin: true, status: true },
+                select: { id: true, isAdmin: true, status: true },
             });
-            if (!user || user.status !== 'ACTIVE') return null;
+            if (!user || user.status !== 'ACTIVE' || !user.isAdmin) return null;
 
-            const adminEmails = (process.env.ADMIN_EMAILS || '')
-                .split(',')
-                .map((e) => e.trim().toLowerCase())
-                .filter(Boolean);
-            const isAdmin =
-                Boolean(user.isAdmin) ||
-                user.email.toLowerCase().endsWith('@admin.wellnesscompanion.com') ||
-                adminEmails.includes(user.email.toLowerCase());
-
-            return isAdmin ? user.id : null;
+            return user.id;
         } catch {
             return null;
         }

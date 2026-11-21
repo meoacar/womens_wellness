@@ -22,6 +22,12 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { remindersService } from '@/services/api';
+import {
+  loadLocalNotificationSettings,
+  saveLocalNotificationSettings,
+  syncLocalRemindersSchedule,
+  syncPendingServerNotifications,
+} from '@/services/notificationEngine';
 import { useAuthStore } from '@/store/authStore';
 import { useNotifications } from '@/hooks/useNotifications';
 import { useTheme } from '@/hooks/useTheme';
@@ -229,21 +235,98 @@ export default function RemindersScreen() {
       if (map['@quiet_hours_start']) setQuietStart(map['@quiet_hours_start']);
       if (map['@quiet_hours_end']) setQuietEnd(map['@quiet_hours_end']);
     });
-  }, []);
+
+    if (isAuthenticated) {
+      remindersService
+        .getNotificationPreferences()
+        .then((prefs: any) => {
+          if (prefs?.quietHours) {
+            const q = prefs.quietHours;
+            const resolvedStart =
+              typeof q.start === 'string' && q.start
+                ? q.start
+                : typeof q.startHour === 'number'
+                ? `${String(q.startHour).padStart(2, '0')}:00`
+                : null;
+            const resolvedEnd =
+              typeof q.end === 'string' && q.end
+                ? q.end
+                : typeof q.endHour === 'number'
+                ? `${String(q.endHour).padStart(2, '0')}:00`
+                : null;
+            if (typeof q.enabled === 'boolean') {
+              setQuietHoursEnabled(q.enabled);
+              AsyncStorage.setItem('@quiet_hours_enabled', q.enabled ? 'true' : 'false').catch(() => {});
+            }
+            if (resolvedStart) {
+              setQuietStart(resolvedStart);
+              AsyncStorage.setItem('@quiet_hours_start', resolvedStart).catch(() => {});
+            }
+            if (resolvedEnd) {
+              setQuietEnd(resolvedEnd);
+              AsyncStorage.setItem('@quiet_hours_end', resolvedEnd).catch(() => {});
+            }
+          }
+        })
+        .catch(() => {});
+    }
+  }, [isAuthenticated]);
+
+  const syncQuietHoursToSettings = async (
+    enabledVal: boolean,
+    startStr: string,
+    endStr: string,
+  ) => {
+    const startHour = Number(startStr.split(':')[0]);
+    const endHour = Number(endStr.split(':')[0]);
+    const safeStart = Number.isFinite(startHour) ? startHour : 23;
+    const safeEnd = Number.isFinite(endHour) ? endHour : 8;
+    const localSettings = await loadLocalNotificationSettings();
+    await saveLocalNotificationSettings({
+      ...localSettings,
+      quietHours: {
+        enabled: enabledVal,
+        startHour: safeStart,
+        endHour: safeEnd,
+      },
+    });
+    return { startHour: safeStart, endHour: safeEnd };
+  };
 
   const handleToggleQuietHours = async (val: boolean) => {
     setQuietHoursEnabled(val);
-    await AsyncStorage.setItem('@quiet_hours_enabled', val ? 'true' : 'false');
+    const { startHour, endHour } = await syncQuietHoursToSettings(val, quietStart, quietEnd);
+    remindersService
+      .updateNotificationPreferences({
+        quietHours: { enabled: val, start: quietStart, end: quietEnd, startHour, endHour },
+      })
+      .catch(() => {});
   };
 
   const updateQuietHour = async (which: 'start' | 'end', next: string) => {
+    const nextStart = which === 'start' ? next : quietStart;
+    const nextEnd = which === 'end' ? next : quietEnd;
     if (which === 'start') {
       setQuietStart(next);
-      await AsyncStorage.setItem('@quiet_hours_start', next);
     } else {
       setQuietEnd(next);
-      await AsyncStorage.setItem('@quiet_hours_end', next);
     }
+    const { startHour, endHour } = await syncQuietHoursToSettings(
+      quietHoursEnabled,
+      nextStart,
+      nextEnd,
+    );
+    remindersService
+      .updateNotificationPreferences({
+        quietHours: {
+          enabled: quietHoursEnabled,
+          start: nextStart,
+          end: nextEnd,
+          startHour,
+          endHour,
+        },
+      })
+      .catch(() => {});
   };
 
   const {
@@ -260,6 +343,11 @@ export default function RemindersScreen() {
     () => (Array.isArray(rawReminders) ? (rawReminders as Reminder[]) : []),
     [rawReminders]
   );
+
+  useEffect(() => {
+    if (!isAuthenticated || permissionStatus !== 'granted') return;
+    syncLocalRemindersSchedule(reminders as any).catch(() => {});
+  }, [isAuthenticated, permissionStatus, reminders, quietHoursEnabled, quietStart, quietEnd]);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -287,13 +375,18 @@ export default function RemindersScreen() {
 
   const testPushMutation = useMutation({
     mutationFn: () => remindersService.testPush(),
-    onSuccess: () => {
-      Alert.alert('Başarılı', 'Sunucu üzerinden test bildirimi gönderildi!');
+    onSuccess: async (data: any) => {
+      if (data?.status === 'queued') {
+        await syncPendingServerNotifications().catch(() => {});
+        Alert.alert('Başarılı', 'Sunucu test bildirimi cihaz senkronizasyonu ile iletildi!');
+      } else {
+        Alert.alert('Başarılı', 'Sunucu üzerinden push test bildirimi gönderildi!');
+      }
     },
     onError: () => {
       Alert.alert(
         'Bilgi',
-        'Sunucu push bildirimi gönderilemedi; cihaz içi yerel bildirim aktif.'
+        'Sunucu push bildirimi şu an gönderilemedi; cihaz içi yerel bildirim aktif.'
       );
     },
   });
@@ -301,6 +394,9 @@ export default function RemindersScreen() {
   const handleAddTemplate = async (tpl: (typeof SMART_TEMPLATES)[number]) => {
     setCreatingTemplateKey(tpl.key);
     try {
+      if (permissionStatus !== 'granted') {
+        await requestPermissions(true);
+      }
       await remindersService.createReminder({
         type: tpl.type,
         title: tpl.title,
@@ -317,14 +413,22 @@ export default function RemindersScreen() {
     }
   };
 
+  const handleEnablePermissions = async () => {
+    const granted = await requestPermissions(true);
+    if (granted) {
+      await syncLocalRemindersSchedule(reminders as any).catch(() => {});
+      await syncPendingServerNotifications().catch(() => {});
+      Alert.alert(
+        'Bildirimler Açıldı',
+        'Harika! Hatırlatmaların ve destek bildirimlerin zamanında cihazına ulaşacak.'
+      );
+    }
+  };
+
   const handleTestNotification = async () => {
     if (permissionStatus !== 'granted') {
-      const granted = await requestPermissions();
+      const granted = await requestPermissions(true);
       if (!granted) {
-        Alert.alert(
-          'Bildirim İzni Gerekli',
-          'Test bildirimi göndermek için cihaz ayarlarından bildirimlere izin vermen gerekiyor.'
-        );
         return;
       }
     }
@@ -335,24 +439,17 @@ export default function RemindersScreen() {
       { screen: 'reminders', test: true }
     );
 
-    if (expoPushToken) {
-      Alert.alert(
-        'Yerel Bildirim Gönderildi',
-        'Sunucu üzerinden anlık push testi de göndermek ister misin?',
-        [
-          { text: 'Tamam', style: 'cancel' },
-          {
-            text: 'Sunucu Push Testi',
-            onPress: () => testPushMutation.mutate(),
-          },
-        ]
-      );
-    } else {
-      Alert.alert(
-        'Test Bildirimi Gönderildi',
-        'Yerel bildirim cihazına iletildi.'
-      );
-    }
+    Alert.alert(
+      'Yerel Bildirim Gönderildi',
+      'Sunucu üzerinden anlık test bildirimi de göndermek ister misin?',
+      [
+        { text: 'Tamam', style: 'cancel' },
+        {
+          text: expoPushToken ? 'Sunucu Push Testi' : 'Sunucu Testi Gönder',
+          onPress: () => testPushMutation.mutate(),
+        },
+      ]
+    );
   };
 
   const handleDelete = (id: string, title: string) => {
@@ -504,7 +601,7 @@ export default function RemindersScreen() {
             ) : (
               <TouchableOpacity
                 activeOpacity={0.8}
-                onPress={requestPermissions}
+                onPress={handleEnablePermissions}
                 style={[styles.statChip, styles.statChipWarn]}
               >
                 <Ionicons

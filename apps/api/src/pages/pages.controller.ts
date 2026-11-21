@@ -41,6 +41,18 @@ export class PagesController {
         return this.pagesService.findAll(isActiveFilter);
     }
 
+    @Get('admin/templates')
+    @UseGuards(JwtAuthGuard, AdminGuard)
+    async adminGetTemplates() {
+        return this.pagesService.getTemplates();
+    }
+
+    @Post('admin/restore-defaults')
+    @UseGuards(JwtAuthGuard, AdminGuard)
+    async adminRestoreDefaults(@Body() body?: { slug?: string }) {
+        return this.pagesService.restoreDefaultBySlug(body?.slug || 'ALL');
+    }
+
     @Get('admin/:id')
     @UseGuards(JwtAuthGuard, AdminGuard)
     async findById(@Param('id') id: string) {

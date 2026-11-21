@@ -18,7 +18,7 @@
     ],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.wellness.companion",
+      "bundleIdentifier": "com.kadinatlasi.wellness",
       "config": {
         "usesNonExemptEncryption": false
       },
@@ -27,25 +27,15 @@
           "remote-notification"
         ],
         "NSAppTransportSecurity": {
-          "NSAllowsArbitraryLoads": true,
-          "NSAllowsLocalNetworking": true,
-          "NSExceptionDomains": {
-            "localhost": {
-              "NSTemporaryExceptionAllowsInsecureHTTPLoads": true,
-              "NSIncludesSubdomains": true
-            },
-            "127.0.0.1": {
-              "NSTemporaryExceptionAllowsInsecureHTTPLoads": true,
-              "NSIncludesSubdomains": true
-            }
-          }
+          "NSAllowsArbitraryLoads": false
         }
       },
       "associatedDomains": [
-        "applinks:wellness-companion.app"
+        "applinks:kadinatlasi.com"
       ]
     },
     "android": {
+      "googleServicesFile": "./android/app/google-services.json",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
@@ -53,6 +43,10 @@
       "package": "com.kadinatlasi.wellness",
       "versionCode": 1,
       "permissions": [
+        "android.permission.ACTIVITY_RECOGNITION",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_HEALTH",
+        "android.permission.POST_NOTIFICATIONS",
         "android.permission.RECEIVE_BOOT_COMPLETED",
         "android.permission.SCHEDULE_EXACT_ALARM",
         "android.permission.VIBRATE",
@@ -65,7 +59,7 @@
           "data": [
             {
               "scheme": "https",
-              "host": "wellness-companion.app",
+              "host": "kadinatlasi.com",
               "pathPrefix": "/"
             }
           ],
@@ -89,7 +83,7 @@
           "icon": "./assets/notification-icon.png",
           "color": "#ffffff",
           "sounds": [
-            "./assets/notification-sound.wav"
+            "./assets/notification_sound.wav"
           ],
           "mode": "production"
         }

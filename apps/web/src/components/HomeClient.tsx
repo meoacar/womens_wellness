@@ -11,10 +11,10 @@ import {
   ShieldCheck,
   Crown,
   ChevronDown,
-  Smartphone,
 } from 'lucide-react';
 import { useAppContext } from './AppContext';
-import { CATEGORY_LABELS } from '@/lib/i18n';
+import { AppleIcon, AndroidIcon } from './StoreIcons';
+import { CATEGORY_LABELS, formatCurrencySymbol, localizePaywall } from '@/lib/i18n';
 import type { PublicArticle, PaywallConfig, SiteSummary } from '@/lib/api';
 
 interface HomeClientProps {
@@ -27,15 +27,17 @@ export function HomeClient({ summary, articles, paywall }: HomeClientProps) {
   const { locale, t, openDownloadModal } = useAppContext();
   const [openFaq, setOpenFaq] = useState<number | null>(0);
 
+  const localizedPaywall = localizePaywall(paywall, locale);
+
   const faqItems =
-    paywall?.faq && paywall.faq.length > 0
-      ? paywall.faq
+    localizedPaywall?.faq && localizedPaywall.faq.length > 0
+      ? localizedPaywall.faq
       : locale === 'tr'
         ? [
             {
               question: 'Kadın Atlası ücretsiz mi?',
               answer:
-                'Evet! Regl takibi, hamilelik modu, su/adım/uyku/nefes kayıtları, hesaplayıcılar ve topluluk özellikleri tamamen ücretsizdir. Sınırsız NOVA AI sohbeti ve gelişmiş raporlar için Premium planlarını inceleyebilirsiniz.',
+                'Evet! Regl takibi, hamilelik modu, su/adım/uyku/nefes kayıtları, hesaplayıcılar ve topluluk özellikleri tamamen ücretsizdir (aylık 100 NOVA AI mesajı dahil). Aylık 1.000 mesaj NOVA AI Pro sohbeti ve gelişmiş raporlar için Premium planlarını inceleyebilirsiniz.',
             },
             {
               question: 'Sağlık verilerim güvende mi?',
@@ -52,7 +54,7 @@ export function HomeClient({ summary, articles, paywall }: HomeClientProps) {
             {
               question: 'Is Kadın Atlası free to use?',
               answer:
-                'Yes! Cycle tracking, pregnancy tools, water/steps/sleep/breathing logs, calculators, and community Q&A are free. Premium unlocks unlimited NOVA AI chat and advanced insights.',
+                'Yes! Cycle tracking, pregnancy tools, water/steps/sleep/breathing logs, calculators, and community Q&A are free (including 100 NOVA AI messages/month). Premium unlocks 1,000 monthly NOVA AI Pro messages and advanced insights.',
             },
             {
               question: 'Is my health data private?',
@@ -66,8 +68,8 @@ export function HomeClient({ summary, articles, paywall }: HomeClientProps) {
             },
           ];
 
-  const monthlyPlan = paywall?.plans?.MONTHLY;
-  const yearlyPlan = paywall?.plans?.YEARLY;
+  const monthlyPlan = localizedPaywall?.plans?.MONTHLY;
+  const yearlyPlan = localizedPaywall?.plans?.YEARLY;
 
   return (
     <div>
@@ -97,7 +99,10 @@ export function HomeClient({ summary, articles, paywall }: HomeClientProps) {
                 onClick={openDownloadModal}
                 className="inline-flex items-center gap-2 rounded-2xl bg-gradient-to-r from-[#FF69B4] to-[#D946EF] px-6 py-3.5 text-sm font-bold text-white shadow-lg shadow-pink-500/25 transition hover:opacity-95"
               >
-                <Smartphone className="h-4 w-4" />
+                <span className="inline-flex items-center gap-1">
+                  <AppleIcon className="h-4 w-4 shrink-0" />
+                  <AndroidIcon className="h-4 w-4 shrink-0" />
+                </span>
                 {t.hero.ctaDownload}
               </button>
 
@@ -110,51 +115,78 @@ export function HomeClient({ summary, articles, paywall }: HomeClientProps) {
               </Link>
             </div>
 
-            <div className="mt-10 grid grid-cols-3 gap-4 border-t border-[var(--border-soft)] pt-6">
-              <div>
-                <div className="text-2xl font-extrabold text-[#E91E63] dark:text-[#FF69B4]">
-                  {summary?.activeArticlesCount ? `${summary.activeArticlesCount}+` : '20+'}
+            <div className="mt-10 grid gap-3 border-t border-[var(--border-soft)] pt-6 sm:grid-cols-3">
+              <Link
+                href="/hesaplayicilar"
+                className="group rounded-2xl border border-[var(--border-soft)] bg-[var(--bg-card)]/80 p-3.5 transition hover:border-[#FF69B4]"
+              >
+                <div className="flex items-center gap-1.5 text-sm font-extrabold text-[#E91E63] dark:text-[#FF69B4]">
+                  <Calculator className="h-4 w-4 shrink-0" aria-hidden="true" />
+                  <span>{t.hero.benefitCalcTitle}</span>
                 </div>
-                <div className="mt-0.5 text-xs font-medium text-[var(--text-muted)]">
-                  {t.hero.statArticles}
+                <div className="mt-1 text-xs font-medium text-[var(--text-muted)] group-hover:text-[var(--text-main)]">
+                  {t.hero.benefitCalcDesc}
                 </div>
-              </div>
-              <div>
-                <div className="text-2xl font-extrabold text-[#7C3AED]">
-                  {summary?.totalBadgesCount ? `${summary.totalBadgesCount}+` : '15+'}
+              </Link>
+
+              <button
+                type="button"
+                onClick={openDownloadModal}
+                className="group rounded-2xl border border-[var(--border-soft)] bg-[var(--bg-card)]/80 p-3.5 text-left transition hover:border-[#7C3AED]"
+              >
+                <div className="flex items-center gap-1.5 text-sm font-extrabold text-[#7C3AED]">
+                  <Sparkles className="h-4 w-4 shrink-0" aria-hidden="true" />
+                  <span>{t.hero.benefitTrackTitle}</span>
                 </div>
-                <div className="mt-0.5 text-xs font-medium text-[var(--text-muted)]">
-                  {t.hero.statBadges}
+                <div className="mt-1 text-xs font-medium text-[var(--text-muted)] group-hover:text-[var(--text-main)]">
+                  {t.hero.benefitTrackDesc}
                 </div>
-              </div>
-              <div>
-                <div className="flex items-center gap-1 text-2xl font-extrabold text-emerald-500">
-                  <ShieldCheck className="h-6 w-6" />
-                  100%
+              </button>
+
+              <Link
+                href="/sayfa/gizlilik-politikasi"
+                className="group rounded-2xl border border-[var(--border-soft)] bg-[var(--bg-card)]/80 p-3.5 transition hover:border-emerald-500"
+              >
+                <div className="flex items-center gap-1.5 text-sm font-extrabold text-emerald-600 dark:text-emerald-400">
+                  <ShieldCheck className="h-4 w-4 shrink-0" aria-hidden="true" />
+                  <span>{t.hero.benefitPrivacyTitle}</span>
                 </div>
-                <div className="mt-0.5 text-xs font-medium text-[var(--text-muted)]">
-                  {t.hero.statPrivacy}
+                <div className="mt-1 text-xs font-medium text-[var(--text-muted)] group-hover:text-[var(--text-main)]">
+                  {t.hero.benefitPrivacyDesc}
                 </div>
-              </div>
+              </Link>
             </div>
           </div>
 
           {/* Right Hero Mascot Collage */}
           <div className="relative mx-auto flex w-full max-w-md items-center justify-center">
             <div className="relative w-full rounded-[32px] border border-[var(--border-soft)] bg-[var(--bg-card)] p-6 shadow-xl shadow-pink-500/10">
-              <div className="flex items-center justify-between">
-                <div>
+              <div className="flex items-start justify-between gap-2 sm:items-center">
+                <div className="min-w-0">
                   <span className="text-xs font-bold uppercase tracking-wider text-[#FF69B4]">
                     NOVA AI & Wellness
                   </span>
-                  <h3 className="mt-1 text-lg font-extrabold text-[var(--text-main)]">
-                    {locale === 'tr' ? 'Bugün Senin Günün ✨' : 'Today Is Your Day ✨'}
+                  <h3 className="mt-1 text-base font-extrabold leading-snug text-[var(--text-main)] sm:text-lg">
+                    {locale === 'tr' ? (
+                      <>
+                        Bugün Senin{' '}
+                        <span className="whitespace-nowrap">Günün ✨</span>
+                      </>
+                    ) : (
+                      <>
+                        Today Is Your{' '}
+                        <span className="whitespace-nowrap">Day ✨</span>
+                      </>
+                    )}
                   </h3>
                 </div>
-                <span className="rounded-full bg-emerald-500/15 px-3 py-1 text-xs font-bold text-emerald-600 dark:text-emerald-400">
-                  {locale === 'tr' ? 'Canlı Senkron' : 'Live Sync'}
+                <span className="shrink-0 whitespace-nowrap rounded-full bg-emerald-500/15 px-3 py-1 text-xs font-bold text-emerald-600 dark:text-emerald-400">
+                  {t.hero.syncBadge}
                 </span>
               </div>
+              <p className="mt-2 text-xs leading-relaxed text-[var(--text-muted)]">
+                {t.hero.syncDesc}
+              </p>
 
               <div className="my-4 flex items-center justify-center rounded-3xl bg-[#FFF0F5] p-6 dark:bg-[#231833]">
                 <img
@@ -301,20 +333,20 @@ export function HomeClient({ summary, articles, paywall }: HomeClientProps) {
       )}
 
       {/* LIVE PREMIUM PREVIEW */}
-      {paywall && (
+      {localizedPaywall && (
         <section className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
           <div className="rounded-3xl border border-[var(--border-soft)] bg-[var(--bg-card)] p-8 sm:p-10">
             <div className="flex flex-col justify-between gap-6 md:flex-row md:items-center">
               <div>
                 <span className="inline-flex items-center gap-1.5 rounded-full bg-purple-500/15 px-3 py-1 text-xs font-bold text-[#7C3AED]">
                   <Crown className="h-3.5 w-3.5" />
-                  {paywall.heroBadge || t.premium.badge}
+                  {localizedPaywall.heroBadge || t.premium.badge}
                 </span>
                 <h2 className="mt-3 text-2xl font-extrabold text-[var(--text-main)] sm:text-3xl">
-                  {paywall.heroTitle}
+                  {localizedPaywall.heroTitle}
                 </h2>
                 <p className="mt-2 max-w-xl text-sm text-[var(--text-muted)]">
-                  {paywall.heroSubtitle}
+                  {localizedPaywall.heroSubtitle}
                 </p>
               </div>
               <Link
@@ -338,15 +370,15 @@ export function HomeClient({ summary, articles, paywall }: HomeClientProps) {
                 >
                   <div className="flex items-center justify-between">
                     <h3 className="text-lg font-extrabold text-[var(--text-main)]">{plan!.title}</h3>
-                    {plan!.badge && (
+                    {(plan!.badge || plan!.badgeText) && (
                       <span className="rounded-full bg-[#FF69B4] px-2.5 py-0.5 text-xs font-bold text-white">
-                        {plan!.badge}
+                        {plan!.badge || plan!.badgeText}
                       </span>
                     )}
                   </div>
                   <div className="mt-3 flex items-baseline gap-1">
                     <span className="text-3xl font-extrabold text-[var(--text-main)]">
-                      {plan!.price} {plan!.currency}
+                      {plan!.price} {formatCurrencySymbol(plan!.currency, plan!.currencySymbol)}
                     </span>
                     <span className="text-xs text-[var(--text-muted)]">
                       / {plan!.tier === 'YEARLY' ? (locale === 'tr' ? 'yıl' : 'year') : (locale === 'tr' ? 'ay' : 'month')}

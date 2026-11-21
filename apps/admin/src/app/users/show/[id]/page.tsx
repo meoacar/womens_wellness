@@ -22,6 +22,8 @@ import {
   DatePicker,
   InputNumber,
   Alert,
+  Table,
+  Tooltip,
   message,
 } from 'antd';
 import {
@@ -36,6 +38,10 @@ import {
   SaveOutlined,
   ReloadOutlined,
   CopyOutlined,
+  LaptopOutlined,
+  SafetyOutlined,
+  BugOutlined,
+  DisconnectOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { useRouter } from 'next/navigation';
@@ -64,13 +70,20 @@ export default function UserShow() {
   const [impersonateData, setImpersonateData] = useState<any>(null);
   const [subForm] = Form.useForm();
   const [subSaving, setSubSaving] = useState(false);
+  const [sessionActionLoading, setSessionActionLoading] = useState(false);
+
+  const loadOverview = async (userId: string) => {
+    try {
+      const res = await apiClient.get(`/admin/users/${userId}/overview`);
+      setOverview(res.data);
+    } catch {
+      // ignore
+    }
+  };
 
   useEffect(() => {
     if (!record?.id) return;
-    apiClient
-      .get(`/admin/users/${record.id}/overview`)
-      .then((res) => setOverview(res.data))
-      .catch(() => {});
+    loadOverview(record.id);
 
     subForm.setFieldsValue({
       status: record.subscription?.status || 'FREE',
@@ -210,10 +223,15 @@ export default function UserShow() {
       });
       if (res.data?.receipt?.status === 'ok') {
         message.success('Push bildirimi kullanıcıya gönderildi');
-      } else {
-        message.info(
+      } else if (res.data?.receipt?.status === 'queued') {
+        message.warning(
           res.data?.receipt?.message ||
-            'Kullanıcının kayıtlı Push Token bilgisi bulunamadı.',
+            'Kullanıcıda Push Token kayıtlı değil; bildirim cihaz içi kuyruğa eklendi (yalnızca uygulama açıldığında iletilir).',
+        );
+      } else {
+        message.error(
+          res.data?.receipt?.message ||
+            'Bildirim gönderilemedi.',
         );
       }
       setPushModalOpen(false);
@@ -223,6 +241,36 @@ export default function UserShow() {
       message.error(error?.response?.data?.message || 'Push gönderilemedi');
     } finally {
       setSendingPush(false);
+    }
+  };
+
+  const handleRevokeSessionFamily = async (familyId: string) => {
+    if (!record?.id) return;
+    setSessionActionLoading(true);
+    try {
+      await apiClient.post(`/admin/users/${record.id}/sessions/${familyId}/revoke`);
+      message.success('Oturum belirteci sonlandırıldı.');
+      await loadOverview(record.id);
+    } catch (error: any) {
+      message.error(error?.response?.data?.message || 'Oturum sonlandırılamadı');
+    } finally {
+      setSessionActionLoading(false);
+    }
+  };
+
+  const handleRevokeAllSessions = async () => {
+    if (!record?.id) return;
+    setSessionActionLoading(true);
+    try {
+      const res = await apiClient.post(`/admin/users/${record.id}/sessions/revoke-all`);
+      message.success(
+        `Tüm JWT oturumları sonlandırıldı (${res.data?.revokedCount ?? 0} yenileme tokenı iptal edildi).`,
+      );
+      await loadOverview(record.id);
+    } catch (error: any) {
+      message.error(error?.response?.data?.message || 'Oturumlar sonlandırılamadı');
+    } finally {
+      setSessionActionLoading(false);
     }
   };
 
@@ -637,6 +685,458 @@ export default function UserShow() {
                         />
                       </List.Item>
                     )}
+                  />
+                </Card>
+              </Space>
+            ),
+          },
+          {
+            key: '6',
+            label: (
+              <Space size={6}>
+                <LaptopOutlined />
+                <span>{`Cihaz, IP & JWT (${overview?.jwtSummary?.activeSessionCount ?? 0})`}</span>
+              </Space>
+            ),
+            children: (
+              <Space direction="vertical" style={{ width: '100%' }} size={16}>
+                <Card size="small" title="Son Cihaz & Bağlantı Telemetrisi">
+                  <Descriptions bordered column={2} size="small">
+                    <Descriptions.Item label="Son IP Adresi">
+                      {overview?.deviceTelemetry?.lastIpAddress ? (
+                        <Text copyable code>
+                          {overview.deviceTelemetry.lastIpAddress}
+                        </Text>
+                      ) : (
+                        'Henüz kaydedilmedi'
+                      )}
+                    </Descriptions.Item>
+                    <Descriptions.Item label="Son Görülme">
+                      {overview?.deviceTelemetry?.lastSeenAt
+                        ? dayjs(overview.deviceTelemetry.lastSeenAt).format('DD.MM.YYYY HH:mm:ss')
+                        : 'Bilinmiyor'}
+                    </Descriptions.Item>
+                    <Descriptions.Item label="Cihaz Modeli">
+                      {overview?.deviceTelemetry?.lastDeviceModel || 'Bilinmiyor'}
+                    </Descriptions.Item>
+                    <Descriptions.Item label="İşletim Sistemi Sürümü">
+                      {overview?.deviceTelemetry?.lastOsVersion || 'Bilinmiyor'}
+                    </Descriptions.Item>
+                    <Descriptions.Item label="Uygulama Sürümü">
+                      {overview?.deviceTelemetry?.lastAppVersion ? (
+                        <Tag color="geekblue">v{overview.deviceTelemetry.lastAppVersion}</Tag>
+                      ) : (
+                        'Bilinmiyor'
+                      )}
+                    </Descriptions.Item>
+                    <Descriptions.Item label="User-Agent">
+                      <Text code style={{ fontSize: 12, wordBreak: 'break-all' }}>
+                        {overview?.deviceTelemetry?.lastUserAgent || '—'}
+                      </Text>
+                    </Descriptions.Item>
+                  </Descriptions>
+                </Card>
+
+                <Card
+                  size="small"
+                  title="JWT Oturum Özeti & Belirteç Politikası"
+                  extra={
+                    <Popconfirm
+                      title="Kullanıcının tüm aktif Access & Refresh JWT oturumları sonlandırılsın mı?"
+                      description="Mevcut erişim tokenları da anında geçersiz kılınır ve yeniden giriş gerekir."
+                      onConfirm={handleRevokeAllSessions}
+                      okText="Tümünü Sonlandır"
+                      cancelText="İptal"
+                    >
+                      <Button
+                        danger
+                        size="small"
+                        icon={<DisconnectOutlined />}
+                        loading={sessionActionLoading}
+                      >
+                        Tüm JWT Oturumlarını Sonlandır
+                      </Button>
+                    </Popconfirm>
+                  }
+                >
+                  <Row gutter={[12, 12]} style={{ marginBottom: 12 }}>
+                    <Col xs={12} md={6}>
+                      <Statistic
+                        title="Aktif Oturum"
+                        value={overview?.jwtSummary?.activeSessionCount ?? 0}
+                        suffix={`/ ${overview?.jwtSummary?.totalSessionCount ?? 0}`}
+                      />
+                    </Col>
+                    <Col xs={12} md={6}>
+                      <Statistic
+                        title="JWT Algoritma / Access TTL"
+                        value={overview?.jwtSummary?.algorithm || 'HS256'}
+                        suffix={`· ${overview?.jwtSummary?.accessTokenTtlMin ?? 15} dk`}
+                      />
+                    </Col>
+                    <Col xs={12} md={6}>
+                      <Statistic
+                        title="Refresh Token TTL"
+                        value={overview?.jwtSummary?.refreshTokenTtlDays ?? 30}
+                        suffix="gün"
+                      />
+                    </Col>
+                    <Col xs={12} md={6}>
+                      <div>
+                        <Text type="secondary" style={{ fontSize: 12, display: 'block' }}>
+                          Son Access JWT JTI / Toplu İptal
+                        </Text>
+                        <Text code style={{ fontSize: 12 }}>
+                          {overview?.jwtSummary?.latestAccessJti || '—'}
+                        </Text>
+                        {overview?.jwtSummary?.sessionsRevokedAt && (
+                          <div style={{ fontSize: 11, color: '#cf1322', marginTop: 4 }}>
+                            Toplu İptal:{' '}
+                            {dayjs(overview.jwtSummary.sessionsRevokedAt).format('DD.MM.YYYY HH:mm:ss')}
+                          </div>
+                        )}
+                      </div>
+                    </Col>
+                  </Row>
+
+                  <Table
+                    size="small"
+                    rowKey="id"
+                    dataSource={overview?.sessions || []}
+                    pagination={{ pageSize: 8 }}
+                    scroll={{ x: 920 }}
+                    locale={{ emptyText: 'Kayıtlı JWT oturumu bulunamadı' }}
+                    columns={[
+                      {
+                        title: 'Durum',
+                        dataIndex: 'status',
+                        key: 'status',
+                        render: (st: string) => {
+                          const map: Record<string, { color: string; label: string }> = {
+                            ACTIVE: { color: 'green', label: 'Aktif' },
+                            ROTATED: { color: 'blue', label: 'Yenilendi' },
+                            REVOKED: { color: 'red', label: 'İptal Edildi' },
+                            EXPIRED: { color: 'default', label: 'Süresi Doldu' },
+                          };
+                          const item = map[st] || { color: 'default', label: st };
+                          return <Tag color={item.color}>{item.label}</Tag>;
+                        },
+                      },
+                      {
+                        title: 'JWT JTI & Token Özeti',
+                        key: 'jwt',
+                        render: (_: any, s: any) => (
+                          <div style={{ fontSize: 12 }}>
+                            <div>
+                              <strong>JTI:</strong>{' '}
+                              {s.accessJti ? <Text copyable code>{s.accessJti}</Text> : '—'}
+                            </div>
+                            <div style={{ color: '#8c8c8c' }}>
+                              <Tooltip title="Güvenlik gereği refresh token yalnızca SHA-256 özeti ile saklanır">
+                                <span>{s.tokenHashPreview}</span>
+                              </Tooltip>
+                            </div>
+                            <div style={{ fontSize: 11, color: '#8c8c8c' }}>
+                              Aile: <code>{String(s.familyId || '').slice(0, 12)}...</code>
+                            </div>
+                          </div>
+                        ),
+                      },
+                      {
+                        title: 'IP & Cihaz',
+                        key: 'device',
+                        render: (_: any, s: any) => (
+                          <div style={{ fontSize: 12 }}>
+                            <div>{s.ipAddress ? <code>{s.ipAddress}</code> : '—'}</div>
+                            <div>
+                              {s.deviceModel || '—'} · {s.osVersion || '—'}
+                            </div>
+                            {s.appVersion && <Tag color="geekblue">v{s.appVersion}</Tag>}
+                          </div>
+                        ),
+                      },
+                      {
+                        title: 'Zamanlar',
+                        key: 'dates',
+                        render: (_: any, s: any) => (
+                          <div style={{ fontSize: 11, lineHeight: 1.5 }}>
+                            <div>Oluşturma: {dayjs(s.createdAt).format('DD.MM.YYYY HH:mm')}</div>
+                            {s.lastUsedAt && (
+                              <div>Son Kullanım: {dayjs(s.lastUsedAt).format('DD.MM.YYYY HH:mm')}</div>
+                            )}
+                            <div>Bitiş: {dayjs(s.expiresAt).format('DD.MM.YYYY HH:mm')}</div>
+                            {s.revokedAt && (
+                              <div style={{ color: '#cf1322' }}>
+                                İptal: {dayjs(s.revokedAt).format('DD.MM.YYYY HH:mm')}
+                              </div>
+                            )}
+                          </div>
+                        ),
+                      },
+                      {
+                        title: 'İşlem',
+                        key: 'action',
+                        render: (_: any, s: any) =>
+                          s.status === 'ACTIVE' ? (
+                            <Popconfirm
+                              title="Bu oturum sonlandırılsın mı?"
+                              onConfirm={() => handleRevokeSessionFamily(s.familyId)}
+                              okText="Sonlandır"
+                              cancelText="İptal"
+                            >
+                              <Button size="small" danger loading={sessionActionLoading}>
+                                Sonlandır
+                              </Button>
+                            </Popconfirm>
+                          ) : (
+                            <span style={{ color: '#8c8c8c', fontSize: 12 }}>—</span>
+                          ),
+                      },
+                    ]}
+                  />
+                </Card>
+
+                {(overview?.impersonationLogs?.length || 0) > 0 && (
+                  <Card size="small" title="Admin Destek (Impersonation) Token Geçmişi">
+                    <List
+                      size="small"
+                      dataSource={overview.impersonationLogs}
+                      renderItem={(log: any) => (
+                        <List.Item>
+                          <List.Item.Meta
+                            title={`Admin: ${log.metadata?.adminEmail || 'Bilinmiyor'}`}
+                            description={`Üretim Zamanı: ${dayjs(log.createdAt).format('DD.MM.YYYY HH:mm:ss')}`}
+                          />
+                        </List.Item>
+                      )}
+                    />
+                  </Card>
+                )}
+              </Space>
+            ),
+          },
+          {
+            key: '7',
+            label: (
+              <Space size={6}>
+                <BugOutlined />
+                <span>{`Hata Kayıtları (${overview?.errorLogs?.length ?? 0})`}</span>
+              </Space>
+            ),
+            children: (
+              <Card size="small" title="Kullanıcıya Ait API & Mobil Hata Kayıtları">
+                <Table
+                  size="small"
+                  rowKey="id"
+                  dataSource={overview?.errorLogs || []}
+                  pagination={{ pageSize: 10 }}
+                  scroll={{ x: 880 }}
+                  locale={{ emptyText: 'Bu kullanıcı için kaydedilmiş hata yok' }}
+                  expandable={{
+                    rowExpandable: (row: any) => Boolean(row.stack),
+                    expandedRowRender: (row: any) => (
+                      <pre
+                        style={{
+                          margin: 0,
+                          fontSize: 11,
+                          whiteSpace: 'pre-wrap',
+                          wordBreak: 'break-word',
+                        }}
+                      >
+                        {row.stack}
+                      </pre>
+                    ),
+                  }}
+                  columns={[
+                    {
+                      title: 'Kaynak / Seviye',
+                      key: 'source',
+                      render: (_: any, e: any) => (
+                        <Space size={4} direction="vertical">
+                          <Space size={4}>
+                            <Tag color={e.source === 'MOBILE' ? 'orange' : 'purple'}>{e.source}</Tag>
+                            <Tag color={e.level === 'FATAL' ? 'red' : 'volcano'}>{e.level}</Tag>
+                          </Space>
+                          {e.statusCode && <Tag>HTTP {e.statusCode}</Tag>}
+                        </Space>
+                      ),
+                    },
+                    {
+                      title: 'Endpoint / Yol',
+                      key: 'path',
+                      render: (_: any, e: any) => (
+                        <div style={{ fontSize: 12 }}>
+                          {e.method && <Tag>{e.method}</Tag>}
+                          <Text code>{e.path || '—'}</Text>
+                        </div>
+                      ),
+                    },
+                    {
+                      title: 'Hata Mesajı',
+                      dataIndex: 'message',
+                      key: 'message',
+                      render: (msg: string) => (
+                        <Text style={{ fontSize: 12, wordBreak: 'break-word' }}>{msg}</Text>
+                      ),
+                    },
+                    {
+                      title: 'IP & Cihaz',
+                      key: 'env',
+                      render: (_: any, e: any) => (
+                        <div style={{ fontSize: 11 }}>
+                          <div>{e.ipAddress ? <code>{e.ipAddress}</code> : '—'}</div>
+                          <div>
+                            {e.deviceModel || '—'} · {e.osVersion || '—'}
+                          </div>
+                          {e.appVersion && <Tag color="geekblue">v{e.appVersion}</Tag>}
+                        </div>
+                      ),
+                    },
+                    {
+                      title: 'Zaman',
+                      dataIndex: 'createdAt',
+                      key: 'createdAt',
+                      render: (v: string) => dayjs(v).format('DD.MM.YYYY HH:mm:ss'),
+                    },
+                  ]}
+                />
+              </Card>
+            ),
+          },
+          {
+            key: '8',
+            label: (
+              <Space size={6}>
+                <SafetyOutlined />
+                <span>{`KVKK & Açık Rıza (${overview?.kvkk?.logs?.length ?? 0})`}</span>
+              </Space>
+            ),
+            children: (
+              <Space direction="vertical" style={{ width: '100%' }} size={16}>
+                <Card size="small" title="Güncel KVKK Açık Rıza Durumu ve Onay Zaman Damgaları">
+                  <Table
+                    size="small"
+                    rowKey="consentType"
+                    pagination={false}
+                    dataSource={overview?.kvkk?.summary || []}
+                    scroll={{ x: 820 }}
+                    columns={[
+                      {
+                        title: 'Rıza / İzin Kalemi',
+                        key: 'label',
+                        render: (_: any, c: any) => (
+                          <Space>
+                            <strong>{c.label}</strong>
+                            {c.required ? (
+                              <Tag color="blue">Zorunlu</Tag>
+                            ) : (
+                              <Tag>İsteğe Bağlı</Tag>
+                            )}
+                          </Space>
+                        ),
+                      },
+                      {
+                        title: 'Durum',
+                        dataIndex: 'granted',
+                        key: 'granted',
+                        render: (granted: boolean) => (
+                          <Tag color={granted ? 'green' : 'red'}>
+                            {granted ? 'Onaylandı' : 'Onay Yok / Geri Çekildi'}
+                          </Tag>
+                        ),
+                      },
+                      {
+                        title: 'Onay / Güncelleme Zaman Damgası',
+                        dataIndex: 'consentedAt',
+                        key: 'consentedAt',
+                        render: (dt: string | null) =>
+                          dt ? (
+                            <Text code>{dayjs(dt).format('DD.MM.YYYY HH:mm:ss')}</Text>
+                          ) : (
+                            <span style={{ color: '#8c8c8c' }}>Onay kaydı yok</span>
+                          ),
+                      },
+                      {
+                        title: 'Kaynak / Sürüm',
+                        key: 'source',
+                        render: (_: any, c: any) => (
+                          <Space size={4}>
+                            <Tag>{c.source || '—'}</Tag>
+                            <Tag color="default">v{c.version || '1.0'}</Tag>
+                          </Space>
+                        ),
+                      },
+                      {
+                        title: 'IP & Cihaz',
+                        key: 'ip',
+                        render: (_: any, c: any) => (
+                          <div style={{ fontSize: 12 }}>
+                            {c.ipAddress ? <code>{c.ipAddress}</code> : '—'}
+                            {c.deviceModel ? ` · ${c.deviceModel}` : ''}
+                          </div>
+                        ),
+                      },
+                    ]}
+                  />
+                </Card>
+
+                <Card size="small" title="KVKK Açık Rıza Değişiklik Geçmişi (Değişmez Denetim Kaydı)">
+                  <Table
+                    size="small"
+                    rowKey="id"
+                    dataSource={overview?.kvkk?.logs || []}
+                    pagination={{ pageSize: 10 }}
+                    scroll={{ x: 820 }}
+                    locale={{ emptyText: 'Henüz zaman damgalı rıza değişiklik logu yok' }}
+                    columns={[
+                      {
+                        title: 'Zaman Damgası',
+                        dataIndex: 'consentedAt',
+                        key: 'consentedAt',
+                        render: (v: string) => (
+                          <Text code>{dayjs(v).format('DD.MM.YYYY HH:mm:ss')}</Text>
+                        ),
+                      },
+                      {
+                        title: 'Rıza Türü',
+                        dataIndex: 'consentType',
+                        key: 'consentType',
+                        render: (t: string) => <Tag color="purple">{t}</Tag>,
+                      },
+                      {
+                        title: 'Karar',
+                        dataIndex: 'granted',
+                        key: 'granted',
+                        render: (g: boolean) => (
+                          <Tag color={g ? 'green' : 'red'}>
+                            {g ? 'Açık Rıza Verildi' : 'Geri Çekildi / Red'}
+                          </Tag>
+                        ),
+                      },
+                      {
+                        title: 'Kaynak / Metin Sürümü',
+                        key: 'meta',
+                        render: (_: any, l: any) => (
+                          <Space size={4}>
+                            <Tag>{l.source || '—'}</Tag>
+                            <Tag>v{l.version || '1.0'}</Tag>
+                          </Space>
+                        ),
+                      },
+                      {
+                        title: 'IP & Cihaz Bilgisi',
+                        key: 'device',
+                        render: (_: any, l: any) => (
+                          <div style={{ fontSize: 11 }}>
+                            <div>{l.ipAddress ? <code>{l.ipAddress}</code> : '—'}</div>
+                            <div>
+                              {l.deviceModel || '—'} · {l.osVersion || '—'}
+                              {l.appVersion ? ` · v${l.appVersion}` : ''}
+                            </div>
+                          </div>
+                        ),
+                      },
+                    ]}
                   />
                 </Card>
               </Space>

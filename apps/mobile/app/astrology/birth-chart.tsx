@@ -23,6 +23,8 @@ import {
     ZodiacSign,
     calculateElementDistribution,
     getSignDescription,
+    parseBirthDateSafe,
+    toBirthDateIsoNoon,
 } from '@/utils/astrology';
 import { astrologyApi, BirthChartResponse } from '@/services/astrologyApi';
 
@@ -43,9 +45,8 @@ export default function BirthChartScreen() {
         enabled: isAuthenticated,
     });
 
-    const initialDate = user?.profile?.dateOfBirth
-        ? new Date(user.profile.dateOfBirth)
-        : new Date(1996, 4, 15);
+    const initialDate =
+        parseBirthDateSafe(user?.profile?.dateOfBirth) || new Date(1996, 4, 15, 12, 0, 0);
 
     const [birthDate, setBirthDate] = useState(initialDate);
     const [birthDateInput, setBirthDateInput] = useState(
@@ -102,7 +103,7 @@ export default function BirthChartScreen() {
         setLoading(true);
         try {
             const result = await astrologyApi.calculateBirthChart({
-                birthDate: birthDate.toISOString(),
+                birthDate: toBirthDateIsoNoon(birthDate),
                 birthTime: birthTime.trim() || '12:00',
                 city: birthPlace.trim(),
             });

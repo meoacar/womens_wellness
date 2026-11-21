@@ -1,3 +1,4 @@
+import { Suspense } from 'react';
 import Providers from './providers';
 import '@refinedev/antd/dist/reset.css';
 import type { Metadata } from 'next';
@@ -31,7 +32,9 @@ export default function RootLayout({
     <html lang="tr" suppressHydrationWarning>
       <body style={{ margin: 0 }}>
         <script dangerouslySetInnerHTML={{ __html: themeBootScript }} />
-        <Providers>{children}</Providers>
+        <Suspense fallback={null}>
+          <Providers>{children}</Providers>
+        </Suspense>
       </body>
     </html>
   );

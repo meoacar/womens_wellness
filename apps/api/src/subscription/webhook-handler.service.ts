@@ -1,23 +1,30 @@
-import { Injectable, Logger, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { ReceiptValidatorService } from './receipt-validator.service';
 import { SubscriptionNotificationService } from './subscription-notification.service';
+import { MonitoringService } from '../common/monitoring/monitoring.service';
+import { loadAppleRootCertificates, verifyAppleJws } from './utils/apple-jws-verifier';
 import * as crypto from 'crypto';
 
 /**
- * Apple App Store Server Notification Types
+ * Apple App Store Server Notification Types (V2)
  * Requirements: 12.1, 12.2, 12.3, 12.4, 12.5, 12.6
  */
 enum AppleNotificationType {
+    SUBSCRIBED = 'SUBSCRIBED',
     INITIAL_BUY = 'INITIAL_BUY',
     DID_RENEW = 'DID_RENEW',
     DID_FAIL_TO_RENEW = 'DID_FAIL_TO_RENEW',
     DID_CHANGE_RENEWAL_STATUS = 'DID_CHANGE_RENEWAL_STATUS',
     CANCEL = 'CANCEL',
+    EXPIRED = 'EXPIRED',
+    GRACE_PERIOD_EXPIRED = 'GRACE_PERIOD_EXPIRED',
     REFUND = 'REFUND',
+    REVOKE = 'REVOKE',
     DID_CHANGE_RENEWAL_PREF = 'DID_CHANGE_RENEWAL_PREF',
     PRICE_INCREASE_CONSENT = 'PRICE_INCREASE_CONSENT',
+    TEST = 'TEST',
 }
 
 /**
@@ -70,6 +77,7 @@ export class WebhookHandlerService {
         private readonly receiptValidator: ReceiptValidatorService,
         private readonly configService: ConfigService,
         private readonly notificationService: SubscriptionNotificationService,
+        @Optional() private readonly monitoring?: MonitoringService,
     ) { }
 
     /**
@@ -91,7 +99,12 @@ export class WebhookHandlerService {
 
             const notificationType = payload.notificationType as AppleNotificationType;
 
-            // Extract transaction data from signed payload
+            if (notificationType === AppleNotificationType.TEST) {
+                this.logger.log('Received verified Apple TEST notification');
+                return;
+            }
+
+            // Extract and verify transaction data from signed JWS payload
             const transactionInfo = await this.decodeAppleTransactionInfo(
                 payload.data?.signedTransactionInfo,
             );
@@ -113,6 +126,7 @@ export class WebhookHandlerService {
 
             // Handle different notification types
             switch (notificationType) {
+                case AppleNotificationType.SUBSCRIBED:
                 case AppleNotificationType.INITIAL_BUY:
                     await this.handleAppleInitialBuy(subscription.id, transactionInfo);
                     break;
@@ -126,7 +140,16 @@ export class WebhookHandlerService {
                     break;
 
                 case AppleNotificationType.DID_CHANGE_RENEWAL_STATUS:
-                    await this.handleAppleRenewalStatusChange(subscription.id, transactionInfo);
+                    await this.handleAppleRenewalStatusChange(
+                        subscription.id,
+                        transactionInfo,
+                        payload.subtype,
+                    );
+                    break;
+
+                case AppleNotificationType.EXPIRED:
+                case AppleNotificationType.GRACE_PERIOD_EXPIRED:
+                    await this.handleAppleExpired(subscription.id, transactionInfo);
                     break;
 
                 case AppleNotificationType.CANCEL:
@@ -134,6 +157,7 @@ export class WebhookHandlerService {
                     break;
 
                 case AppleNotificationType.REFUND:
+                case AppleNotificationType.REVOKE:
                     await this.handleAppleRefund(subscription.id, transactionInfo);
                     break;
 
@@ -141,12 +165,19 @@ export class WebhookHandlerService {
                     this.logger.log('Unhandled Apple notification type', { notificationType });
             }
 
+            this.monitoring?.recordSuccess('payment_webhook');
             this.logger.log('Apple notification processed successfully', {
                 notificationType,
                 subscriptionId: subscription.id,
             });
-        } catch (error) {
-            this.logger.error('Failed to process Apple notification', error.stack);
+        } catch (error: any) {
+            await this.monitoring?.recordFailure(
+                'payment_webhook',
+                `Apple notification processing failed: ${error?.message || error}`,
+                { provider: 'APPLE', notificationType: payload?.notificationType },
+                error,
+            );
+            this.logger.error('Failed to process Apple notification', error?.stack);
             throw error;
         }
     }
@@ -233,12 +264,22 @@ export class WebhookHandlerService {
                     this.logger.log('Unhandled Google notification type', { notificationType });
             }
 
+            this.monitoring?.recordSuccess('payment_webhook');
             this.logger.log('Google notification processed successfully', {
                 notificationType,
                 subscriptionId: subscription.id,
             });
-        } catch (error) {
-            this.logger.error('Failed to process Google notification', error.stack);
+        } catch (error: any) {
+            await this.monitoring?.recordFailure(
+                'payment_webhook',
+                `Google notification processing failed: ${error?.message || error}`,
+                {
+                    provider: 'GOOGLE',
+                    notificationType: payload?.subscriptionNotification?.notificationType,
+                },
+                error,
+            );
+            this.logger.error('Failed to process Google notification', error?.stack);
             throw error;
         }
     }
@@ -250,14 +291,19 @@ export class WebhookHandlerService {
      * Requirements: 12.1, 12.2
      */
     private async handleAppleInitialBuy(subscriptionId: string, transactionInfo: any): Promise<void> {
-        this.logger.log('Handling Apple INITIAL_BUY', { subscriptionId });
+        this.logger.log('Handling Apple INITIAL_BUY/SUBSCRIBED', { subscriptionId });
 
-        // This is typically already handled by the purchase endpoint
-        // But we can update the subscription if needed
+        const expiresDate = transactionInfo.expiresDate
+            ? new Date(Number(transactionInfo.expiresDate))
+            : undefined;
+
         const subscription = await this.prisma.subscription.update({
             where: { id: subscriptionId },
             data: {
                 status: 'ACTIVE',
+                ...(expiresDate && Number.isFinite(expiresDate.getTime()) ? { endDate: expiresDate } : {}),
+                isInGracePeriod: false,
+                gracePeriodEndDate: null,
                 updatedAt: new Date(),
             },
         });
@@ -279,7 +325,10 @@ export class WebhookHandlerService {
     private async handleAppleRenewal(subscriptionId: string, transactionInfo: any): Promise<void> {
         this.logger.log('Handling Apple DID_RENEW', { subscriptionId });
 
-        const expiresDate = new Date(parseInt(transactionInfo.expiresDate));
+        const expiresDate = new Date(Number(transactionInfo.expiresDate));
+        if (!Number.isFinite(expiresDate.getTime())) {
+            throw new BadRequestException('Invalid expiresDate in Apple DID_RENEW notification');
+        }
 
         const subscription = await this.prisma.subscription.update({
             where: { id: subscriptionId },
@@ -292,21 +341,25 @@ export class WebhookHandlerService {
             },
         });
 
-        // Create renewal transaction record
-        await this.prisma.subscriptionTransaction.create({
-            data: {
-                subscriptionId,
-                transactionId: transactionInfo.transactionId,
-                originalTransactionId: transactionInfo.originalTransactionId,
-                productId: transactionInfo.productId,
-                amount: 0, // Amount not provided in notification
-                currency: 'TRY',
-                status: 'COMPLETED',
-                type: 'RENEWAL',
-                provider: 'APPLE',
-                validatedAt: new Date(),
-            },
+        const existingTx = await this.prisma.subscriptionTransaction.findUnique({
+            where: { transactionId: transactionInfo.transactionId },
         });
+        if (!existingTx) {
+            await this.prisma.subscriptionTransaction.create({
+                data: {
+                    subscriptionId,
+                    transactionId: transactionInfo.transactionId,
+                    originalTransactionId: transactionInfo.originalTransactionId,
+                    productId: transactionInfo.productId,
+                    amount: 0, // Amount not provided in notification
+                    currency: 'TRY',
+                    status: 'COMPLETED',
+                    type: 'RENEWAL',
+                    provider: 'APPLE',
+                    validatedAt: new Date(),
+                },
+            });
+        }
 
         // Send renewal notification
         if (subscription.tier) {
@@ -352,13 +405,58 @@ export class WebhookHandlerService {
      */
     private async handleAppleRenewalStatusChange(
         subscriptionId: string,
-        transactionInfo: any,
+        _transactionInfo: any,
+        subtype?: string,
     ): Promise<void> {
-        this.logger.log('Handling Apple DID_CHANGE_RENEWAL_STATUS', { subscriptionId });
+        this.logger.log('Handling Apple DID_CHANGE_RENEWAL_STATUS', { subscriptionId, subtype });
 
-        // User changed auto-renewal setting
-        // We don't need to do much here, just log it
-        // The subscription will naturally expire if not renewed
+        if (subtype === 'AUTO_RENEW_DISABLED') {
+            const subscription = await this.prisma.subscription.update({
+                where: { id: subscriptionId },
+                data: {
+                    status: 'CANCELLED',
+                    cancelledAt: new Date(),
+                    updatedAt: new Date(),
+                },
+            });
+            if (subscription.endDate) {
+                await this.notificationService.sendSubscriptionCancelled(
+                    subscription.userId,
+                    subscription.endDate,
+                );
+            }
+        } else if (subtype === 'AUTO_RENEW_ENABLED') {
+            await this.prisma.subscription.update({
+                where: { id: subscriptionId },
+                data: {
+                    status: 'ACTIVE',
+                    cancelledAt: null,
+                    updatedAt: new Date(),
+                },
+            });
+        }
+    }
+
+    private async handleAppleExpired(subscriptionId: string, transactionInfo: any): Promise<void> {
+        this.logger.log('Handling Apple EXPIRED', { subscriptionId });
+
+        const expiresDate = transactionInfo.expiresDate
+            ? new Date(Number(transactionInfo.expiresDate))
+            : new Date();
+
+        const subscription = await this.prisma.subscription.update({
+            where: { id: subscriptionId },
+            data: {
+                status: 'EXPIRED',
+                endDate: Number.isFinite(expiresDate.getTime()) ? expiresDate : new Date(),
+                aiMessagesLimit: 100,
+                isInGracePeriod: false,
+                gracePeriodEndDate: null,
+                updatedAt: new Date(),
+            },
+        });
+
+        await this.notificationService.sendSubscriptionExpired(subscription.userId);
     }
 
     /**
@@ -387,7 +485,7 @@ export class WebhookHandlerService {
     }
 
     /**
-     * Handle REFUND event
+     * Handle REFUND / REVOKE event
      * Requirements: 12.6
      */
     private async handleAppleRefund(subscriptionId: string, transactionInfo: any): Promise<void> {
@@ -399,25 +497,34 @@ export class WebhookHandlerService {
             data: {
                 status: 'EXPIRED',
                 endDate: new Date(),
+                aiMessagesLimit: 100,
+                isInGracePeriod: false,
+                gracePeriodEndDate: null,
                 updatedAt: new Date(),
             },
         });
 
-        // Create refund transaction record
-        await this.prisma.subscriptionTransaction.create({
-            data: {
-                subscriptionId,
-                transactionId: transactionInfo.transactionId,
-                originalTransactionId: transactionInfo.originalTransactionId,
-                productId: transactionInfo.productId,
-                amount: 0,
-                currency: 'TRY',
-                status: 'REFUNDED',
-                type: 'REFUND',
-                provider: 'APPLE',
-                validatedAt: new Date(),
-            },
+        // Create idempotent refund transaction record
+        const refundTxId = `refund_${transactionInfo.transactionId}`;
+        const existingTx = await this.prisma.subscriptionTransaction.findUnique({
+            where: { transactionId: refundTxId },
         });
+        if (!existingTx) {
+            await this.prisma.subscriptionTransaction.create({
+                data: {
+                    subscriptionId,
+                    transactionId: refundTxId,
+                    originalTransactionId: transactionInfo.originalTransactionId,
+                    productId: transactionInfo.productId,
+                    amount: 0,
+                    currency: 'TRY',
+                    status: 'REFUNDED',
+                    type: 'REFUND',
+                    provider: 'APPLE',
+                    validatedAt: new Date(),
+                },
+            });
+        }
 
         // Send expiration notification (due to refund)
         await this.notificationService.sendSubscriptionExpired(subscription.userId);
@@ -473,21 +580,26 @@ export class WebhookHandlerService {
             },
         });
 
-        // Create renewal transaction record
-        await this.prisma.subscriptionTransaction.create({
-            data: {
-                subscriptionId,
-                transactionId: receiptData.transactionId,
-                originalTransactionId: receiptData.originalTransactionId,
-                productId: receiptData.productId,
-                amount: 0,
-                currency: 'TRY',
-                status: 'COMPLETED',
-                type: 'RENEWAL',
-                provider: 'GOOGLE',
-                validatedAt: new Date(),
-            },
+        // Create renewal transaction record idempotently
+        const existingTx = await this.prisma.subscriptionTransaction.findUnique({
+            where: { transactionId: receiptData.transactionId },
         });
+        if (!existingTx) {
+            await this.prisma.subscriptionTransaction.create({
+                data: {
+                    subscriptionId,
+                    transactionId: receiptData.transactionId,
+                    originalTransactionId: receiptData.originalTransactionId,
+                    productId: receiptData.productId,
+                    amount: 0,
+                    currency: 'TRY',
+                    status: 'COMPLETED',
+                    type: 'RENEWAL',
+                    provider: 'GOOGLE',
+                    validatedAt: new Date(),
+                },
+            });
+        }
 
         // Send renewal notification
         if (subscription.tier) {
@@ -616,25 +728,34 @@ export class WebhookHandlerService {
             data: {
                 status: 'EXPIRED',
                 endDate: new Date(),
+                aiMessagesLimit: 100,
+                isInGracePeriod: false,
+                gracePeriodEndDate: null,
                 updatedAt: new Date(),
             },
         });
 
-        // Create refund transaction record
-        await this.prisma.subscriptionTransaction.create({
-            data: {
-                subscriptionId,
-                transactionId: receiptData.transactionId,
-                originalTransactionId: receiptData.originalTransactionId,
-                productId: receiptData.productId,
-                amount: 0,
-                currency: 'TRY',
-                status: 'REFUNDED',
-                type: 'REFUND',
-                provider: 'GOOGLE',
-                validatedAt: new Date(),
-            },
+        // Create idempotent refund transaction record
+        const refundTxId = `refund_${receiptData.transactionId}`;
+        const existingTx = await this.prisma.subscriptionTransaction.findUnique({
+            where: { transactionId: refundTxId },
         });
+        if (!existingTx) {
+            await this.prisma.subscriptionTransaction.create({
+                data: {
+                    subscriptionId,
+                    transactionId: refundTxId,
+                    originalTransactionId: receiptData.originalTransactionId,
+                    productId: receiptData.productId,
+                    amount: 0,
+                    currency: 'TRY',
+                    status: 'REFUNDED',
+                    type: 'REFUND',
+                    provider: 'GOOGLE',
+                    validatedAt: new Date(),
+                },
+            });
+        }
 
         // Send expiration notification (due to refund)
         await this.notificationService.sendSubscriptionExpired(subscription.userId);
@@ -643,7 +764,7 @@ export class WebhookHandlerService {
     // ==================== Verification Methods ====================
 
     /**
-     * Verify Apple notification signature
+     * Verify Apple notification payload & signedTransactionInfo JWS
      * Requirements: 10.1, 10.2, 10.3
      */
     private async verifyAppleSignature(payload: any): Promise<boolean> {
@@ -651,23 +772,39 @@ export class WebhookHandlerService {
             return false;
         }
 
+        if (payload.notificationType === AppleNotificationType.TEST) {
+            return true;
+        }
+
         const signedTx = payload.data?.signedTransactionInfo;
         if (!signedTx || typeof signedTx !== 'string') {
             return false;
         }
 
-        // Validate JWS 3-part structure (header.payload.signature) or JSON test payload
-        const parts = signedTx.split('.');
-        if (parts.length === 3) {
-            try {
-                const header = JSON.parse(Buffer.from(parts[0], 'base64url').toString('utf8'));
-                if (!header.alg) return false;
-            } catch {
-                return false;
-            }
+        if (
+            process.env.NODE_ENV === 'development' &&
+            process.env.SKIP_WEBHOOK_VERIFICATION === 'true'
+        ) {
+            return signedTx.split('.').length === 3;
         }
 
-        return true;
+        try {
+            const rootCertificates = loadAppleRootCertificates();
+            const { payload: txPayload } = verifyAppleJws<any>(signedTx, {
+                rootCertificates,
+            });
+            const expectedBundleId = process.env.APPLE_BUNDLE_ID || 'com.kadinatlasi.wellness';
+            if (expectedBundleId && txPayload?.bundleId && txPayload.bundleId !== expectedBundleId) {
+                return false;
+            }
+            return Boolean(txPayload?.transactionId && txPayload?.originalTransactionId);
+        } catch (err) {
+            this.logger.warn(
+                'Failed to verify nested Apple signedTransactionInfo JWS:',
+                err instanceof Error ? err.message : String(err),
+            );
+            return false;
+        }
     }
 
     /**
@@ -692,29 +829,41 @@ export class WebhookHandlerService {
     }
 
     /**
-     * Decode Apple signed transaction info
+     * Decode verified Apple signed transaction info JWS (fail closed, never mock).
      */
     private async decodeAppleTransactionInfo(signedTransactionInfo: string): Promise<any> {
-        try {
-            const parts = signedTransactionInfo.split('.');
-            if (parts.length === 3) {
-                const decoded = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
-                return {
-                    transactionId: decoded.transactionId || 'mock_transaction_id',
-                    originalTransactionId: decoded.originalTransactionId || 'mock_original_transaction_id',
-                    productId: decoded.productId || 'com.wellness.premium.monthly',
-                    expiresDate: decoded.expiresDate || Date.now() + 30 * 24 * 60 * 60 * 1000,
-                };
-            }
-        } catch (error) {
-            this.logger.warn('Fallback to default decoded Apple transaction info', error);
+        if (!signedTransactionInfo || typeof signedTransactionInfo !== 'string') {
+            throw new BadRequestException('Missing signedTransactionInfo in Apple notification');
+        }
+
+        const parts = signedTransactionInfo.split('.');
+        if (parts.length !== 3) {
+            throw new BadRequestException('Invalid JWS format in signedTransactionInfo');
+        }
+
+        let decoded: any;
+        if (
+            process.env.NODE_ENV === 'development' &&
+            process.env.SKIP_WEBHOOK_VERIFICATION === 'true'
+        ) {
+            decoded = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+        } else {
+            const rootCertificates = loadAppleRootCertificates();
+            decoded = verifyAppleJws<any>(signedTransactionInfo, {
+                rootCertificates,
+            }).payload;
+        }
+
+        if (!decoded?.transactionId || !decoded?.originalTransactionId || !decoded?.productId) {
+            throw new BadRequestException('Incomplete transaction fields in signedTransactionInfo');
         }
 
         return {
-            transactionId: 'mock_transaction_id',
-            originalTransactionId: 'mock_original_transaction_id',
-            productId: 'com.wellness.premium.monthly',
-            expiresDate: Date.now() + 30 * 24 * 60 * 60 * 1000,
+            transactionId: decoded.transactionId,
+            originalTransactionId: decoded.originalTransactionId,
+            productId: decoded.productId,
+            expiresDate: decoded.expiresDate,
+            bundleId: decoded.bundleId,
         };
     }
 }

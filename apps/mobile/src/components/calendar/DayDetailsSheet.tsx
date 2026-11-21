@@ -25,7 +25,10 @@ interface DayDetailsSheetProps {
   isFertile?: boolean;
   isPredicted?: boolean;
   isOvulation?: boolean;
+  isCycleEnd?: boolean;
   onLogPeriodStart?: () => void;
+  onMarkPeriodEnd?: () => void;
+  onEditPeriod?: () => void;
 }
 
 const commonSymptoms = [
@@ -64,7 +67,10 @@ export function DayDetailsSheet({
   isFertile,
   isPredicted,
   isOvulation,
+  isCycleEnd,
   onLogPeriodStart,
+  onMarkPeriodEnd,
+  onEditPeriod,
 }: DayDetailsSheetProps) {
   const theme = useTheme();
   const queryClient = useQueryClient();
@@ -72,6 +78,7 @@ export function DayDetailsSheet({
 
   const [flow, setFlow] = useState<'light' | 'moderate' | 'heavy' | undefined>();
   const [cramps, setCramps] = useState<number>(0);
+  const [isPeriodSectionOpen, setIsPeriodSectionOpen] = useState<boolean>(false);
   const [symptoms, setSymptoms] = useState<string[]>([]);
   const [mood, setMood] = useState<string[]>([]);
   const [hadSex, setHadSex] = useState(false);
@@ -85,6 +92,7 @@ export function DayDetailsSheet({
       const log = dayData.dailyLog;
       setFlow(log.flow);
       setCramps(log.cramps || 0);
+      setIsPeriodSectionOpen(Boolean(isPeriod || log.flow || (log.cramps && log.cramps > 0)));
       setSymptoms(log.symptoms || []);
       setMood(log.mood || []);
       setHadSex(log.hadSex || false);
@@ -95,6 +103,7 @@ export function DayDetailsSheet({
     } else if (visible) {
       setFlow(isPeriod ? 'moderate' : undefined);
       setCramps(0);
+      setIsPeriodSectionOpen(Boolean(isPeriod));
       setSymptoms([]);
       setMood([]);
       setHadSex(false);
@@ -238,68 +247,143 @@ export function DayDetailsSheet({
                   <Ionicons name="water" size={18} color="#FF4D8D" />
                 </View>
                 <View>
-                  <Text style={styles.periodBannerTitle}>Reglin Bugün mü Başladı?</Text>
-                  <Text style={styles.periodBannerSub}>Tek dokunuşla döngü başlangıcı kaydet</Text>
+                  <Text style={styles.periodBannerTitle}>Regl Başlat</Text>
+                  <Text style={styles.periodBannerSub}>Başlangıç veya bitiş tarihini seçerek kaydet</Text>
                 </View>
               </View>
               <Ionicons name="chevron-forward" size={18} color="#FF4D8D" />
             </TouchableOpacity>
           )}
 
-          {/* Period Details Card */}
+          {isPeriod && (onMarkPeriodEnd || onEditPeriod) && (
+            <View style={styles.periodBanner}>
+              <View style={styles.periodBannerLeft}>
+                <View style={styles.periodBannerIcon}>
+                  <Ionicons name="calendar-outline" size={18} color="#FF4D8D" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.periodBannerTitle}>
+                    {isCycleEnd ? 'Adet Bitiş Günü İşaretlendi' : 'Regl Dönemi Yönetimi'}
+                  </Text>
+                  <Text style={styles.periodBannerSub}>
+                    {isCycleEnd
+                      ? 'Başlangıç veya bitiş tarihini dilediğin gibi düzenleyebilirsin'
+                      : 'Reglin bu günde bittiyse işaretleyebilir veya tarihleri düzenleyebilirsin'}
+                  </Text>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
+                    {!isCycleEnd && onMarkPeriodEnd && (
+                      <TouchableOpacity
+                        style={{
+                          backgroundColor: '#FF4D8D',
+                          paddingHorizontal: 10,
+                          paddingVertical: 6,
+                          borderRadius: 10,
+                        }}
+                        onPress={onMarkPeriodEnd}
+                      >
+                        <Text style={{ color: '#FFFFFF', fontSize: 12, fontWeight: '700' }}>
+                          Adet Bitişi İşaretle
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+                    {onEditPeriod && (
+                      <TouchableOpacity
+                        style={{
+                          backgroundColor: 'rgba(255, 77, 141, 0.14)',
+                          paddingHorizontal: 10,
+                          paddingVertical: 6,
+                          borderRadius: 10,
+                        }}
+                        onPress={onEditPeriod}
+                      >
+                        <Text style={{ color: '#FF4D8D', fontSize: 12, fontWeight: '700' }}>
+                          Tarihleri Düzenle
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                </View>
+              </View>
+            </View>
+          )}
+
+          {/* Period Details Card (Collapsible) */}
           <View style={styles.card}>
-            <View style={styles.sectionHeader}>
-              <Ionicons name="water-outline" size={18} color={theme.colors.primary} />
-              <Text style={styles.sectionTitle}>Regl & Kramp</Text>
-            </View>
+            <TouchableOpacity
+              style={[
+                styles.switchRow,
+                isPeriodSectionOpen && { marginBottom: 12 },
+              ]}
+              onPress={() => setIsPeriodSectionOpen((prev) => !prev)}
+              activeOpacity={0.75}
+            >
+              <View style={styles.sectionHeaderInline}>
+                <Ionicons name="water-outline" size={18} color={theme.colors.primary} />
+                <Text style={styles.sectionTitle}>Regl & Kramp</Text>
+                {(flow || cramps > 0) && !isPeriodSectionOpen && (
+                  <Text style={{ fontSize: 12, color: theme.colors.primary, fontWeight: '600' }}>
+                    • Seçili
+                  </Text>
+                )}
+              </View>
+              <Ionicons
+                name={isPeriodSectionOpen ? 'chevron-up' : 'chevron-down'}
+                size={18}
+                color={theme.colors.textSecondary}
+              />
+            </TouchableOpacity>
 
-            <Text style={styles.label}>Akış Yoğunluğu</Text>
-            <View style={styles.flowButtons}>
-              {(['light', 'moderate', 'heavy'] as const).map((level) => {
-                const isActive = flow === level;
-                return (
-                  <TouchableOpacity
-                    key={level}
-                    style={[styles.flowButton, isActive && styles.flowButtonActive]}
-                    onPress={() => setFlow(isActive ? undefined : level)}
-                    activeOpacity={0.8}
-                  >
-                    <Text
-                      style={[
-                        styles.flowButtonText,
-                        isActive && styles.flowButtonTextActive,
-                      ]}
-                    >
-                      {level === 'light' ? 'Hafif' : level === 'moderate' ? 'Orta' : 'Yoğun'}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
+            {isPeriodSectionOpen && (
+              <>
+                <Text style={styles.label}>Akış Yoğunluğu</Text>
+                <View style={styles.flowButtons}>
+                  {(['light', 'moderate', 'heavy'] as const).map((level) => {
+                    const isActive = flow === level;
+                    return (
+                      <TouchableOpacity
+                        key={level}
+                        style={[styles.flowButton, isActive && styles.flowButtonActive]}
+                        onPress={() => setFlow(isActive ? undefined : level)}
+                        activeOpacity={0.8}
+                      >
+                        <Text
+                          style={[
+                            styles.flowButtonText,
+                            isActive && styles.flowButtonTextActive,
+                          ]}
+                        >
+                          {level === 'light' ? 'Hafif' : level === 'moderate' ? 'Orta' : 'Yoğun'}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
 
-            <Text style={styles.label}>Kramp Şiddeti (0 – 5)</Text>
-            <View style={styles.crampsSlider}>
-              {[0, 1, 2, 3, 4, 5].map((level) => {
-                const isActive = cramps === level;
-                return (
-                  <TouchableOpacity
-                    key={level}
-                    style={[styles.crampsButton, isActive && styles.crampsButtonActive]}
-                    onPress={() => setCramps(level)}
-                    activeOpacity={0.8}
-                  >
-                    <Text
-                      style={[
-                        styles.crampsButtonText,
-                        isActive && styles.crampsButtonTextActive,
-                      ]}
-                    >
-                      {level}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
+                <Text style={styles.label}>Kramp Şiddeti (0 – 5)</Text>
+                <View style={styles.crampsSlider}>
+                  {[0, 1, 2, 3, 4, 5].map((level) => {
+                    const isActive = cramps === level;
+                    return (
+                      <TouchableOpacity
+                        key={level}
+                        style={[styles.crampsButton, isActive && styles.crampsButtonActive]}
+                        onPress={() => setCramps(level)}
+                        activeOpacity={0.8}
+                      >
+                        <Text
+                          style={[
+                            styles.crampsButtonText,
+                            isActive && styles.crampsButtonTextActive,
+                          ]}
+                        >
+                          {level}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </>
+            )}
           </View>
 
           {/* Symptoms Card */}

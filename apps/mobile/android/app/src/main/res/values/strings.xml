@@ -1,0 +1,12 @@
+<resources>
+  <string name="app_name">Kadın Atlası</string>
+  <string name="widget_description">Döngü günü, su ve adım özetinizi ana ekranda takip edin.</string>
+  <string name="widget_cycle_label">Kadın Atlası • Döngü</string>
+  <string name="widget_cycle_desc">Regl geri sayımı ve döngü fazınızı kompakt kartta görün.</string>
+  <string name="widget_wellness_label">Kadın Atlası • Su &amp; Adım</string>
+  <string name="widget_wellness_desc">Günlük su ve otomatik adım ilerlemenizi canlı takip edin.</string>
+  <string name="widget_astro_label">Kadın Atlası • Burç &amp; Zihin</string>
+  <string name="widget_astro_desc">Burç yorumu, seri ve meditasyon dakikanıza hızlı ulaşın.</string>
+  <string name="expo_splash_screen_resize_mode" translatable="false">contain</string>
+  <string name="expo_splash_screen_status_bar_translucent" translatable="false">false</string>
+</resources>

@@ -182,21 +182,23 @@ export class DiscoverController {
     async trackView(
         @Request() req,
         @Param('id') id: string,
-        @Body() body: { readTimeMs?: number },
+        @Body() body?: { readTimeMs?: number },
     ) {
         // Validate ID format
         if (!id || id.length < 10) {
             throw new BadRequestException('Invalid article ID');
         }
 
+        const readTimeMs = body?.readTimeMs;
+
         // Validate readTimeMs if provided
-        if (body.readTimeMs !== undefined) {
-            if (typeof body.readTimeMs !== 'number' || body.readTimeMs < 0 || body.readTimeMs > 3600000) {
+        if (readTimeMs !== undefined) {
+            if (typeof readTimeMs !== 'number' || readTimeMs < 0 || readTimeMs > 3600000) {
                 throw new BadRequestException('Read time must be between 0 and 3600000ms (1 hour)');
             }
         }
 
-        await this.discoverService.trackView(req.user.id, id, body.readTimeMs);
+        await this.discoverService.trackView(req.user.id, id, readTimeMs);
         return { success: true };
     }
 

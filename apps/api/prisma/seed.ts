@@ -8,13 +8,16 @@ const prisma = new PrismaClient();
 async function main() {
   console.log('🌱 Seeding database...');
 
-  // Create admin user
+  // Create admin user with explicit admin role
   const adminUser = await prisma.user.upsert({
     where: { email: 'admin@wellness.local' },
-    update: {},
+    update: {
+      isAdmin: true,
+    },
     create: {
       email: 'admin@wellness.local',
       password: await hash('admin123', 10),
+      isAdmin: true,
       profile: {
         create: {
           displayName: 'Admin User',

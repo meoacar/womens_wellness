@@ -39,7 +39,7 @@ class CalculateBMRDto {
 
   @IsOptional()
   @IsString()
-  activityLevel?: 'sedentary' | 'light' | 'moderate' | 'active' | 'very_active';
+  activityLevel?: 'sedentary' | 'light' | 'moderate' | 'active' | 'very_active' | 'extreme';
 }
 
 class CalculateWaterDto {
@@ -49,11 +49,11 @@ class CalculateWaterDto {
 
   @IsOptional()
   @IsString()
-  activity?: 'sedentary' | 'moderate' | 'active';
+  activity?: 'sedentary' | 'low' | 'moderate' | 'active' | 'high';
 
   @IsOptional()
   @IsString()
-  climate?: 'cool' | 'temperate' | 'hot';
+  climate?: 'cool' | 'cold' | 'temperate' | 'moderate' | 'hot';
 }
 
 class CalculateCyclePublicDto {
@@ -111,16 +111,14 @@ export class MetricsController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Calculate and save BMI' })
   async calculateBMI(@CurrentUser() user: any, @Body() dto: CalculateBMIDto) {
-    console.log('BMI Request DTO:', dto);
-    console.log('weightKg:', dto.weightKg, 'type:', typeof dto.weightKg);
-    console.log('heightCm:', dto.heightCm, 'type:', typeof dto.heightCm);
+    if (!Number.isFinite(dto.heightCm) || !Number.isFinite(dto.weightKg) || dto.heightCm < 50 || dto.heightCm > 260 || dto.weightKg < 20 || dto.weightKg > 350) {
+      throw new BadRequestException('Geçerli boy (cm) ve kilo (kg) değerleri giriniz.');
+    }
 
     const result = this.calculatorService.calculateBMI(
       dto.weightKg,
       dto.heightCm,
     );
-
-    console.log('BMI Calculation Result:', result);
 
     const metric = await this.metricsService.saveMetric(user.id, {
       kind: 'BMI',
@@ -146,11 +144,25 @@ export class MetricsController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Calculate BMR and TDEE' })
   async calculateBMR(@CurrentUser() user: any, @Body() dto: CalculateBMRDto) {
+    if (
+      !Number.isFinite(dto.heightCm) ||
+      !Number.isFinite(dto.weightKg) ||
+      !Number.isFinite(dto.ageYears) ||
+      dto.heightCm < 50 ||
+      dto.heightCm > 260 ||
+      dto.weightKg < 20 ||
+      dto.weightKg > 350 ||
+      dto.ageYears < 10 ||
+      dto.ageYears > 120
+    ) {
+      throw new BadRequestException('Geçerli boy (cm), kilo (kg) ve yaş değerleri giriniz.');
+    }
+
     const bmr = this.calculatorService.calculateBMR(
       dto.weightKg,
       dto.heightCm,
       dto.ageYears,
-      dto.sex,
+      dto.sex || 'female',
     );
 
     const tdee = dto.activityLevel
@@ -165,7 +177,7 @@ export class MetricsController {
         heightCm: dto.heightCm,
         weightKg: dto.weightKg,
         ageYears: dto.ageYears,
-        sex: dto.sex,
+        sex: dto.sex || 'female',
         activityLevel: dto.activityLevel,
       },
     });
@@ -182,13 +194,10 @@ export class MetricsController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Calculate daily water need' })
   async calculateWater(@Body() dto: CalculateWaterDto) {
-    console.log('Water Request DTO:', dto);
-    console.log('weightKg:', dto.weightKg, 'type:', typeof dto.weightKg);
-    console.log('activity:', dto.activity);
-    console.log('climate:', dto.climate);
-
-    // Ensure weightKg is a number
     const weightKg = typeof dto.weightKg === 'string' ? parseFloat(dto.weightKg) : dto.weightKg;
+    if (!Number.isFinite(weightKg) || weightKg < 20 || weightKg > 350) {
+      throw new BadRequestException('Geçerli bir kilo (kg) değeri giriniz.');
+    }
 
     const dailyNeed = this.calculatorService.calculateDailyWaterNeed(
       weightKg,
@@ -196,12 +205,11 @@ export class MetricsController {
       dto.climate || 'temperate',
     );
 
-    console.log('Calculated daily need:', dailyNeed);
-
     return {
       dailyWaterMl: dailyNeed,
       dailyNeedMl: dailyNeed,
       dailyNeedL: Math.round(dailyNeed / 100) / 10,
+      glasses200Ml: Math.ceil(dailyNeed / 200),
     };
   }
 
@@ -212,8 +220,8 @@ export class MetricsController {
   @Post('public/bmi')
   @ApiOperation({ summary: 'Public BMI calculation for website visitors' })
   calculatePublicBMI(@Body() dto: CalculateBMIDto) {
-    if (!dto.heightCm || !dto.weightKg || dto.heightCm <= 0 || dto.weightKg <= 0) {
-      throw new BadRequestException('Geçerli boy ve kilo değerleri giriniz.');
+    if (!Number.isFinite(dto.heightCm) || !Number.isFinite(dto.weightKg) || dto.heightCm < 50 || dto.heightCm > 260 || dto.weightKg < 20 || dto.weightKg > 350) {
+      throw new BadRequestException('Geçerli boy (cm) ve kilo (kg) değerleri giriniz.');
     }
     const result = this.calculatorService.calculateBMI(dto.weightKg, dto.heightCm);
     return {
@@ -227,8 +235,18 @@ export class MetricsController {
   @Post('public/bmr')
   @ApiOperation({ summary: 'Public BMR & TDEE calculation for website visitors' })
   calculatePublicBMR(@Body() dto: CalculateBMRDto) {
-    if (!dto.heightCm || !dto.weightKg || !dto.ageYears) {
-      throw new BadRequestException('Boy, kilo ve yaş alanları zorunludur.');
+    if (
+      !Number.isFinite(dto.heightCm) ||
+      !Number.isFinite(dto.weightKg) ||
+      !Number.isFinite(dto.ageYears) ||
+      dto.heightCm < 50 ||
+      dto.heightCm > 260 ||
+      dto.weightKg < 20 ||
+      dto.weightKg > 350 ||
+      dto.ageYears < 10 ||
+      dto.ageYears > 120
+    ) {
+      throw new BadRequestException('Geçerli boy (cm), kilo (kg) ve yaş değerleri giriniz.');
     }
     const bmr = this.calculatorService.calculateBMR(
       dto.weightKg,
@@ -248,8 +266,8 @@ export class MetricsController {
   @Post('public/water')
   @ApiOperation({ summary: 'Public daily water calculation for website visitors' })
   calculatePublicWater(@Body() dto: CalculateWaterDto) {
-    if (!dto.weightKg || dto.weightKg <= 0) {
-      throw new BadRequestException('Geçerli kilo değeri giriniz.');
+    if (!Number.isFinite(dto.weightKg) || dto.weightKg < 20 || dto.weightKg > 350) {
+      throw new BadRequestException('Geçerli kilo (kg) değeri giriniz.');
     }
     const dailyNeed = this.calculatorService.calculateDailyWaterNeed(
       dto.weightKg,
@@ -259,6 +277,7 @@ export class MetricsController {
     return {
       dailyWaterMl: dailyNeed,
       dailyNeedL: Math.round(dailyNeed / 100) / 10,
+      glasses200Ml: Math.ceil(dailyNeed / 200),
       glasses250Ml: Math.ceil(dailyNeed / 250),
     };
   }

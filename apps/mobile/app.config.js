@@ -1,3 +1,7 @@
+const isDevelopmentBuild =
+    process.env.EAS_BUILD_PROFILE === 'development' ||
+    process.env.APP_ENV === 'development';
+
 module.exports = {
     expo: {
         name: "Kadın Atlası",
@@ -26,20 +30,24 @@ module.exports = {
                 UIBackgroundModes: [
                     "remote-notification"
                 ],
-                NSAppTransportSecurity: {
-                    NSAllowsArbitraryLoads: true,
-                    NSAllowsLocalNetworking: true,
-                    NSExceptionDomains: {
-                        localhost: {
-                            NSTemporaryExceptionAllowsInsecureHTTPLoads: true,
-                            NSIncludesSubdomains: true
-                        },
-                        "127.0.0.1": {
-                            NSTemporaryExceptionAllowsInsecureHTTPLoads: true,
-                            NSIncludesSubdomains: true
-                        }
-                    }
-                }
+                NSAppTransportSecurity: isDevelopmentBuild
+                    ? {
+                          NSAllowsArbitraryLoads: false,
+                          NSAllowsLocalNetworking: true,
+                          NSExceptionDomains: {
+                              localhost: {
+                                  NSTemporaryExceptionAllowsInsecureHTTPLoads: true,
+                                  NSIncludesSubdomains: true
+                              },
+                              "127.0.0.1": {
+                                  NSTemporaryExceptionAllowsInsecureHTTPLoads: true,
+                                  NSIncludesSubdomains: true
+                              }
+                          }
+                      }
+                    : {
+                          NSAllowsArbitraryLoads: false
+                      }
             },
             associatedDomains: [
                 "applinks:kadinatlasi.com"
@@ -89,7 +97,7 @@ module.exports = {
                     icon: "./assets/notification-icon.png",
                     color: "#ffffff",
                     sounds: [
-                        "./assets/notification-sound.wav"
+                        "./assets/notification_sound.wav"
                     ],
                     mode: "production"
                 }
@@ -102,9 +110,13 @@ module.exports = {
             router: {
                 origin: false
             },
-            eas: {
-                projectId: "6facc7f8-f777-4a91-8b10-c8f04b0a3310"
-            }
+            ...(process.env.EAS_BUILD
+                ? {
+                      eas: {
+                          projectId: "6facc7f8-f777-4a91-8b10-c8f04b0a3310"
+                      }
+                  }
+                : {})
         }
     }
 };

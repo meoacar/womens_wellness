@@ -56,12 +56,21 @@ export class WellnessService {
   ) { }
 
   /**
-   * Normalize a date to midnight in UTC
-   * This ensures consistent date handling across save/retrieve operations
+   * Normalize a date (YYYY-MM-DD or Date/ISO) to midnight UTC for its calendar date.
+   * For YYYY-MM-DD strings, uses that exact calendar date without timezone shift.
+   * For Date/ISO timestamps, uses the server's local timezone (TZ=Europe/Istanbul).
    */
   private normalizeToMidnight(date: Date | string): Date {
+    if (typeof date === 'string') {
+      const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date.trim());
+      if (dateOnly) {
+        return new Date(
+          Date.UTC(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]), 0, 0, 0, 0),
+        );
+      }
+    }
     const d = typeof date === 'string' ? new Date(date) : date;
-    return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 0, 0, 0, 0));
+    return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0));
   }
 
   /**

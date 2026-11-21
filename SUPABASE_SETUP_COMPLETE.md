@@ -38,10 +38,10 @@ Production database'e tabloları oluşturalım:
 cd apps/api
 
 # 2. Prisma ile Supabase'e bağlan
-DATABASE_URL="postgresql://postgres:Djcoder-0539@db.ujaynuggtchjstzuuevu.supabase.co:5432/postgres" npx prisma db push
+DATABASE_URL="postgresql://postgres:<ROTATED_DB_PASSWORD>@db.<PROJECT_REF>.supabase.co:5432/postgres" npx prisma db push
 
 # 3. Seed data ekle (opsiyonel)
-DATABASE_URL="postgresql://postgres:Djcoder-0539@db.ujaynuggtchjstzuuevu.supabase.co:5432/postgres" npx prisma db seed
+DATABASE_URL="postgresql://postgres:<ROTATED_DB_PASSWORD>@db.<PROJECT_REF>.supabase.co:5432/postgres" npx prisma db seed
 ```
 
 ### Sonra: Redis Setup (5 dakika)
@@ -106,7 +106,7 @@ Database migration'ı çalıştırmak için:
 
 ```bash
 cd apps/api
-DATABASE_URL="postgresql://postgres:Djcoder-0539@db.ujaynuggtchjstzuuevu.supabase.co:5432/postgres" npx prisma db push
+DATABASE_URL="postgresql://postgres:<ROTATED_DB_PASSWORD>@db.<PROJECT_REF>.supabase.co:5432/postgres" npx prisma db push
 ```
 
 Başarılı olursa şunu göreceksin:

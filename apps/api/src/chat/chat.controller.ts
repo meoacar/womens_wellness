@@ -247,39 +247,58 @@ export class ChatController {
     return new Observable((subscriber) => {
       (async () => {
         try {
-          const result = await this.chatService.streamResponse(
-            user.id,
-            conversationId,
-            lastMessage.content,
-          );
-
           let fullResponse = '';
           let tokenCount = 0;
 
-          // Stream tokens using textStream async iterator
-          this.logger.debug(`[Stream] Starting to stream tokens for conversation ${conversationId}`);
-          let tokenCounter = 0;
-          for await (const textPart of result.textStream) {
-            fullResponse += textPart;
-            tokenCount++;
-            tokenCounter++;
+          const consumeStream = async (overrideGoogleModel?: string) => {
+            const attemptAbort = new AbortController();
+            const result = await this.chatService.streamResponse(
+              user.id,
+              conversationId,
+              lastMessage.content,
+              { overrideGoogleModel, abortSignal: attemptAbort.signal },
+            );
 
-            if (tokenCounter === 1) {
-              this.logger.debug(`[Stream] First token received: "${textPart.substring(0, 20)}..."`);
+            const iterator = result.textStream[Symbol.asyncIterator]();
+            const firstChunk = await Promise.race([
+              iterator.next(),
+              new Promise<never>((_, reject) =>
+                setTimeout(() => {
+                  attemptAbort.abort();
+                  reject(new Error('AI_FIRST_TOKEN_TIMEOUT'));
+                }, 12000),
+              ),
+            ]);
+
+            if (!firstChunk.done && firstChunk.value) {
+              fullResponse += firstChunk.value;
+              tokenCount++;
+              subscriber.next({ data: firstChunk.value, type: 'token' } as any);
             }
 
-            subscriber.next({
-              data: textPart,
-              type: 'token',
-            } as any);
-
-            // Check if aborted
-            if (abort.signal.aborted) {
-              this.logger.debug(`[Stream] Stream aborted by client`);
-              break;
+            while (!firstChunk.done) {
+              if (abort.signal.aborted) break;
+              const nextChunk = await iterator.next();
+              if (nextChunk.done) break;
+              if (nextChunk.value) {
+                fullResponse += nextChunk.value;
+                tokenCount++;
+                subscriber.next({ data: nextChunk.value, type: 'token' } as any);
+              }
             }
+          };
+
+          try {
+            await consumeStream();
+          } catch (primaryErr: any) {
+            if (tokenCount > 0 || abort.signal.aborted) {
+              throw primaryErr;
+            }
+            this.logger.warn(
+              `[Stream] Primary AI model failed/timed out (${primaryErr?.message}); retrying with gemini-3-flash-preview`,
+            );
+            await consumeStream('gemini-3-flash-preview');
           }
-          this.logger.debug(`[Stream] Streaming completed. Total tokens: ${tokenCount}, response length: ${fullResponse.length}`);
 
           // Save assistant response to database
           if (!abort.signal.aborted) {

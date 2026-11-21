@@ -6,7 +6,12 @@
  */
 
 export interface AuthEventPayload {
-  reason?: 'ACCOUNT_SUSPENDED' | 'ACCOUNT_DELETED' | 'SESSION_EXPIRED' | 'REFRESHED';
+  reason?:
+    | 'ACCOUNT_SUSPENDED'
+    | 'ACCOUNT_DELETED'
+    | 'SESSION_EXPIRED'
+    | 'REFRESH_TOKEN_REUSED'
+    | 'REFRESHED';
   message?: string;
 }
 

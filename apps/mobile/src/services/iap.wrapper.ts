@@ -27,4 +27,5 @@ if (useRealIAP) {
 }
 
 export { iapManager };
-export * from './iap.mock'; // Types ve error classes için
+export { IAPErrorCode, IAPServiceError } from './iap.mock';
+export type { Purchase, Product, SubscriptionTier } from './iap.mock';

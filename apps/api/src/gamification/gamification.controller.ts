@@ -3,6 +3,7 @@ import { GamificationService } from './gamification.service';
 import { AchievementService } from './achievement.service';
 import { InsightService } from './insight.service';
 import { JwtAuthGuard } from '../auth/strategies/jwt-auth.guard';
+import { AdminGuard } from '../common/guards/admin.guard';
 
 @Controller('gamification')
 @UseGuards(JwtAuthGuard)
@@ -81,23 +82,11 @@ export class GamificationController {
         return this.gamificationService.resetUserGamification(req.user.id);
     }
 
-    // Admin endpoint to seed achievements (temporarily public for setup)
+    // Admin-only endpoint to seed default achievements
     @Post('seed-achievements')
+    @UseGuards(JwtAuthGuard, AdminGuard)
     async seedAchievements() {
-        // Check if achievements already exist
         const existing = await this.achievementService.seedAchievements();
         return { message: 'Achievements seeded successfully', count: existing.length };
-    }
-}
-
-// Public endpoint for seeding (no auth required)
-@Controller('public/gamification')
-export class PublicGamificationController {
-    constructor(private achievementService: AchievementService) { }
-
-    @Post('seed-achievements')
-    async seedAchievements() {
-        const achievements = await this.achievementService.seedAchievements();
-        return { message: 'Achievements seeded successfully', count: achievements.length };
     }
 }

@@ -1,13 +1,22 @@
-import type { Locale } from './api';
+import type { Locale, PaywallConfig } from './api';
+
+export const SITE_URL = 'https://kadinatlasi.com';
 
 export const CATEGORY_LABELS: Record<Locale, Record<string, string>> = {
   tr: {
     ALL: 'Tümü',
     menstrual_health: 'Regl Sağlığı',
     pregnancy: 'Hamilelik',
+    fertility: 'Doğurganlık',
     nutrition: 'Beslenme',
+    exercise: 'Egzersiz',
     fitness: 'Fitness & Hareket',
     mental_health: 'Ruh Sağlığı',
+    sleep: 'Uyku',
+    hydration: 'Hidrasyon',
+    contraception: 'Korunma Yöntemleri',
+    pms: 'PMS',
+    menopause: 'Menopoz',
     wellness: 'Wellness',
     sexual_health: 'Cinsel Sağlık',
     general: 'Genel',
@@ -16,17 +25,200 @@ export const CATEGORY_LABELS: Record<Locale, Record<string, string>> = {
     ALL: 'All',
     menstrual_health: 'Menstrual Health',
     pregnancy: 'Pregnancy',
+    fertility: 'Fertility',
     nutrition: 'Nutrition',
+    exercise: 'Exercise',
     fitness: 'Fitness',
     mental_health: 'Mental Health',
+    sleep: 'Sleep',
+    hydration: 'Hydration',
+    contraception: 'Contraception',
+    pms: 'PMS',
+    menopause: 'Menopause',
     wellness: 'Wellness',
     sexual_health: 'Sexual Health',
     general: 'General',
   },
 };
 
+const TAG_LABELS_TR: Record<string, string> = {
+  cycle: 'döngü',
+  period: 'regl',
+  basics: 'temel-bilgiler',
+  hormones: 'hormonlar',
+  cramps: 'kramp',
+  pms: 'pms',
+  wellness: 'wellness',
+  fertility: 'doğurganlık',
+  conception: 'gebelik-planlama',
+  ovulation: 'yumurtlama',
+  pregnancy: 'hamilelik',
+  nutrition: 'beslenme',
+  iron: 'demir',
+  magnesium: 'magnezyum',
+  sexual_health: 'cinsel-sağlık',
+  communication: 'iletişim',
+  protection: 'korunma',
+  checkup: 'kontrol',
+  mental_health: 'ruh-sağlığı',
+  sleep: 'uyku',
+  hydration: 'su-tüketimi',
+};
+
+export function formatTagLabel(tag: string, locale: Locale): string {
+  const normalized = (tag || '').trim();
+  if (locale === 'tr') {
+    return TAG_LABELS_TR[normalized.toLowerCase()] || normalized;
+  }
+  return normalized;
+}
+
+export function formatCurrencySymbol(currency?: string, symbol?: string): string {
+  if (symbol && symbol.trim()) return symbol.trim();
+  const code = (currency || 'TRY').toUpperCase();
+  if (code === 'TRY') return '₺';
+  if (code === 'USD') return '$';
+  if (code === 'EUR') return '€';
+  if (code === 'GBP') return '£';
+  return code;
+}
+
+export function getRouteMeta(
+  pathname: string,
+  locale: Locale,
+): { title: string; description: string; canonical: string } {
+  const cleanPath = (pathname || '/').split('?')[0].replace(/\/+$/, '') || '/';
+  const canonical = cleanPath === '/' ? SITE_URL : `${SITE_URL}${cleanPath}`;
+
+  const routeMap: Record<
+    string,
+    { tr: { title: string; description: string }; en: { title: string; description: string } }
+  > = {
+    '/': {
+      tr: {
+        title: 'Kadın Atlası — Döngü, Hamilelik, Wellness ve NOVA AI Asistanı',
+        description:
+          'Regl ve yumurtlama takibi, hafta hafta hamilelik rehberi, ücretsiz sağlık hesaplayıcıları ve NOVA AI asistanı ile bütüncül kadın sağlığı platformu.',
+      },
+      en: {
+        title: 'Kadın Atlası — Cycle, Pregnancy, Wellness & NOVA AI Companion',
+        description:
+          'Holistic women’s health platform featuring period & ovulation tracking, week-by-week pregnancy care, free calculators, and NOVA AI.',
+      },
+    },
+    '/hesaplayicilar': {
+      tr: {
+        title: 'Sağlık ve Döngü Hesaplayıcıları (Regl, Gebelik, Su, VKİ, Kalori) — Kadın Atlası',
+        description:
+          'Üyelik gerektirmeyen ücretsiz regl ve yumurtlama günü, gebelik haftası, günlük su ihtiyacı, VKİ (BMI) ve bazal metabolizma (BMR) hesaplayıcıları.',
+      },
+      en: {
+        title: 'Health & Cycle Calculators (Period, Pregnancy, Water, BMI, BMR) — Kadın Atlası',
+        description:
+          'Instant, registration-free calculators for menstrual cycle & ovulation, pregnancy week, daily water intake, BMI, and calorie needs.',
+      },
+    },
+    '/kesfet': {
+      tr: {
+        title: 'Keşfet — Bilimsel Kadın Sağlığı Rehberleri ve Makaleler — Kadın Atlası',
+        description:
+          'Uzman editörler ve tıbbi yayın kurulu tarafından incelenen regl sağlığı, doğurganlık, gebelik, beslenme ve cinsel sağlık rehberleri.',
+      },
+      en: {
+        title: 'Discover — Evidence-Informed Women’s Health Guides & Articles — Kadın Atlası',
+        description:
+          'Clinically reviewed articles and guides on menstrual health, fertility, pregnancy, nutrition, and sexual wellbeing.',
+      },
+    },
+    '/premium': {
+      tr: {
+        title: 'Premium Planlar ve Özellik Karşılaştırması — Kadın Atlası',
+        description:
+          'Aylık 1.000 mesaj NOVA AI Pro sohbeti, 3 aylık döngü projeksiyonu, 90 günlük doktor raporu ve Partner Modu ile Kadın Atlası Premium.',
+      },
+      en: {
+        title: 'Premium Plans & Feature Comparison — Kadın Atlası',
+        description:
+          'Unlock 1,000 monthly NOVA AI Pro messages, 3-month cycle projections, 90-day clinical doctor reports, and Partner Mode.',
+      },
+    },
+    '/iletisim': {
+      tr: {
+        title: 'İletişim, Destek ve KVKK Başvuru Formu — Kadın Atlası',
+        description:
+          'Kadın Atlası destek ekibine ulaşın; uygulama desteği, iş birliği ve 6698 sayılı KVKK kapsamındaki veri taleplerinizi iletin.',
+      },
+      en: {
+        title: 'Contact, Support & Data Protection (KVKK) Requests — Kadın Atlası',
+        description:
+          'Reach the Kadın Atlası support team for app assistance, partnerships, or KVKK / GDPR data subject requests.',
+      },
+    },
+    '/sayfa/hakkimizda': {
+      tr: {
+        title: 'Hakkımızda ve Kurumsal Künye — Kadın Atlası',
+        description:
+          'Kadın Atlası kurumsal kimliği, işletmeci bilgileri, Tıbbi Yayın ve İnceleme Kurulu, bilimsel içerik ilkeleri ve veri etiği taahhüdü.',
+      },
+      en: {
+        title: 'About Us & Corporate Information — Kadın Atlası',
+        description:
+          'Corporate identity, operator details, Medical Review Board, editorial standards, and data ethics commitment of Kadın Atlası.',
+      },
+    },
+    '/sayfa/gizlilik-politikasi': {
+      tr: {
+        title: 'Gizlilik Politikası ve KVKK Aydınlatma Metni — Kadın Atlası',
+        description:
+          '6698 sayılı KVKK uyarınca toplanan sağlık ve döngü verileri, işleme amaçları, NOVA AI veri güvenliği, saklama süreleri ve başvuru haklarınız.',
+      },
+      en: {
+        title: 'Privacy Policy & Data Protection Disclosure — Kadın Atlası',
+        description:
+          'Full disclosure on health data protection, NOVA AI privacy guardrails, retention schedules, JSON export, and KVKK/GDPR rights.',
+      },
+    },
+    '/sayfa/kvkk-aydinlatma-metni': {
+      tr: {
+        title: 'KVKK Aydınlatma ve Açık Rıza Metni — Kadın Atlası',
+        description:
+          'Özel nitelikli sağlık verilerinin işlenmesine ilişkin KVKK Madde 6 ve Madde 10 aydınlatma metni ve açık rıza yönetimi.',
+      },
+      en: {
+        title: 'KVKK Clarification & Explicit Consent Notice — Kadın Atlası',
+        description:
+          'Information on mandatory vs. explicit-consent health data processing and how to withdraw consent anytime.',
+      },
+    },
+    '/sayfa/kullanim-kosullari': {
+      tr: {
+        title: 'Kullanım Koşulları ve Yasal Uyarılar — Kadın Atlası',
+        description:
+          'Kadın Atlası kullanım şartları, tıbbi sorumluluk reddi, NOVA AI mesaj kotaları, topluluk kuralları ve abonelik iptal koşulları.',
+      },
+      en: {
+        title: 'Terms of Service & Medical Disclaimer — Kadın Atlası',
+        description:
+          'Platform terms of use, medical disclaimer, NOVA AI quota rules, community guidelines, and subscription terms.',
+      },
+    },
+  };
+
+  const entry = routeMap[cleanPath] || routeMap['/'];
+  return {
+    title: entry[locale].title,
+    description: entry[locale].description,
+    canonical,
+  };
+}
+
 export const translations = {
   tr: {
+    meta: {
+      title: 'Kadın Atlası — Döngü, Hamilelik, Wellness ve NOVA AI Asistanı',
+      description:
+        'Regl ve yumurtlama takibi, hafta hafta hamilelik rehberi, günlük su ve 4-7-8 nefes egzersizleri ile bütüncül kadın sağlığı platformu.',
+    },
     brand: 'Kadın Atlası',
     tagline: 'Döngün, hamileliğin, wellness rutinin ve yapay zeka asistanın NOVA tek uygulamada.',
     nav: {
@@ -36,6 +228,11 @@ export const translations = {
       premium: 'Premium',
       contact: 'İletişim & Destek',
       download: 'Uygulamayı İndir',
+      ariaSwitchLang: 'Dili değiştir (İngilizceye geç)',
+      ariaThemeLight: 'Açık temaya geç',
+      ariaThemeDark: 'Koyu temaya geç',
+      ariaMenuOpen: 'Menüyü aç',
+      ariaMenuClose: 'Menüyü kapat',
     },
     hero: {
       badge: 'Kadın Sağlığı & Wellness Ekosistemi',
@@ -45,9 +242,15 @@ export const translations = {
         'Regl döngüsü tahminlerinden gebelik takibine, su ve nefes egzersizlerinden 7/24 NOVA AI rehberliğine kadar her anında yanında olan akıllı yol arkadaşın.',
       ctaDownload: 'Ücretsiz İndir (iOS & Android)',
       ctaCalculators: 'Ücretsiz Hesaplayıcıları Dene',
-      statArticles: 'Uzman Rehber Makalesi',
-      statBadges: 'Alışkanlık & Rozet Hedefi',
-      statPrivacy: 'KVKK Uyumlu Gizli Veri',
+      benefitCalcTitle: 'Ücretsiz Hesaplayıcılar',
+      benefitCalcDesc: 'Kayıt gerektirmeyen 5 klinik araç →',
+      benefitTrackTitle: 'Günlük Takip',
+      benefitTrackDesc: 'Regl, gebelik, su, uyku ve semptom',
+      benefitPrivacyTitle: 'Veri Kontrolü Sende',
+      benefitPrivacyDesc: 'KVKK uyumlu, JSON indir & sil →',
+      syncBadge: 'Cihazlar Arası Senkron',
+      syncDesc:
+        'Döngü takvimin, günlük su/uyku kayıtların ve NOVA AI sohbetlerin telefonun ile güvenli bulut hesabın arasında otomatik senkronize edilir.',
     },
     features: {
       title: 'Tek Uygulamada Bütüncül Kadın Sağlığı',
@@ -113,7 +316,7 @@ export const translations = {
       relatedTitle: 'İlgili Makaleler',
     },
     premium: {
-      badge: 'Sınırsız Deneyim',
+      badge: 'Premium Deneyim',
       ctaApp: 'Uygulamada Başlat',
       monthly: 'Aylık Plan',
       yearly: 'Yıllık Plan',
@@ -143,7 +346,7 @@ export const translations = {
       subtitle: 'iOS ve Android cihazlarda ücretsiz başla, tüm döngü ve wellness verilerini güvenle sakla.',
       ios: 'App Store’dan İndir',
       android: 'Google Play’den İndir',
-      close: 'Kapat',
+      close: 'Pencereyi kapat',
     },
     footer: {
       desc: 'Kadın sağlığı, döngü bilinci, hamilelik ve bütüncül wellness için tasarlanmış güvenli dijital yol arkadaşınız.',
@@ -155,6 +358,11 @@ export const translations = {
     },
   },
   en: {
+    meta: {
+      title: 'Kadın Atlası — Cycle, Pregnancy, Wellness & NOVA AI Companion',
+      description:
+        'Holistic women’s health platform featuring period & ovulation tracking, week-by-week pregnancy care, daily hydration, and 4-7-8 breathing.',
+    },
     brand: 'Kadın Atlası',
     tagline: 'Your cycle, pregnancy, wellness habits, and NOVA AI assistant in one app.',
     nav: {
@@ -164,6 +372,11 @@ export const translations = {
       premium: 'Premium',
       contact: 'Contact & Support',
       download: 'Get the App',
+      ariaSwitchLang: 'Switch language to Turkish',
+      ariaThemeLight: 'Switch to light theme',
+      ariaThemeDark: 'Switch to dark theme',
+      ariaMenuOpen: 'Open menu',
+      ariaMenuClose: 'Close menu',
     },
     hero: {
       badge: 'Women’s Health & Wellness Platform',
@@ -173,9 +386,15 @@ export const translations = {
         'From smart period & ovulation predictions to pregnancy tracking, hydration, 4-7-8 breathing, and 24/7 NOVA AI guidance.',
       ctaDownload: 'Download Free (iOS & Android)',
       ctaCalculators: 'Try Free Calculators',
-      statArticles: 'Expert Health Guides',
-      statBadges: 'Habit & Badge Milestones',
-      statPrivacy: 'GDPR / KVKK Compliant',
+      benefitCalcTitle: 'Free Calculators',
+      benefitCalcDesc: '5 instant clinical tools, no sign-up →',
+      benefitTrackTitle: 'Daily Tracking',
+      benefitTrackDesc: 'Period, pregnancy, water & sleep logs',
+      benefitPrivacyTitle: 'You Control Your Data',
+      benefitPrivacyDesc: 'KVKK/GDPR, JSON export & delete →',
+      syncBadge: 'Cross-Device Cloud Sync',
+      syncDesc:
+        'Your cycle calendar, daily water/sleep logs, and NOVA AI chats stay automatically synced between your phone and secure cloud account.',
     },
     features: {
       title: 'Holistic Women’s Health in One Place',
@@ -240,7 +459,7 @@ export const translations = {
       relatedTitle: 'Related Articles',
     },
     premium: {
-      badge: 'Unlimited Experience',
+      badge: 'Premium Experience',
       ctaApp: 'Start in App',
       monthly: 'Monthly Plan',
       yearly: 'Yearly Plan',
@@ -270,7 +489,7 @@ export const translations = {
       subtitle: 'Start free on iOS or Android and keep your cycle and wellness data synced securely.',
       ios: 'Download on App Store',
       android: 'Get it on Google Play',
-      close: 'Close',
+      close: 'Close modal',
     },
     footer: {
       desc: 'Your trusted digital companion for menstrual health, pregnancy care, and holistic wellness.',
@@ -282,3 +501,103 @@ export const translations = {
     },
   },
 };
+
+const PAYWALL_TEXT_EN: Record<string, string> = {
+  'Sağlığını 360° Keşfet & Planla': 'Explore & Plan Your Health 360°',
+  '3 aylık döngü projeksiyonu, uyku-kramp korelasyonları, doktora özel klinik rapor, Partner Modu ve 10x NOVA AI kapasitesiyle tam kontrol.':
+    'Full control with 3-month cycle projections, sleep-cramp correlations, clinical doctor reports, Partner Mode, and 1,000 monthly NOVA AI Pro messages.',
+  'Aylık Plan': 'Monthly Plan',
+  'Yıllık Plan': 'Yearly Plan',
+  'Esnek faturalandırma • İstediğin zaman iptal': 'Flexible billing • Cancel anytime',
+  'Aylık ~₺83 • En avantajlı seçenek': '~83 ₺/mo • Best value',
+  'EN POPÜLER': 'MOST POPULAR',
+  '%17 Tasarruf': 'Save 17%',
+  'Gelecek 3 Ay Döngü Projeksiyonu': '3-Month Cycle Projection',
+  '90 Günlük Klinik Doktor Raporu': '90-Day Clinical Doctor Report',
+  'Partner Modu (Eş Paylaşımı)': 'Partner Mode (Partner Sharing)',
+  'Partner Modu & Doğum Haritası': 'Partner Mode & Birth Chart',
+  'Uyku & Kramp Korelasyon Analizi': 'Sleep & Cramp Correlation Analysis',
+  'Uyku & Kramp Korelasyonu': 'Sleep & Cramp Correlation',
+  'Doğum Haritası & Burç Uyumu': 'Birth Chart & Zodiac Compatibility',
+  'Doğum Haritası & Uyum': 'Birth Chart & Compatibility',
+  'NOVA Pro Hafıza (1.000 mesaj/ay)': 'NOVA Pro Memory (1,000 messages/month)',
+  'NOVA Pro Hafıza (1000+ mesaj/ay)': 'NOVA Pro Memory (1,000 messages/month)',
+  '3 Aylık Döngü Projeksiyonu': '3-Month Cycle Projection',
+  '1 Döngü': '1 Cycle',
+  '3 Ay İleriye': '3 Months Ahead',
+  'Klinik Doktor Raporu': 'Clinical Doctor Report',
+  '30 Gün Metin': '30 Days Text',
+  '90 Gün + PDF/HTML': '90 Days + PDF/HTML',
+  '1 Özet': '1 Summary',
+  'Tam Analiz': 'Full Analysis',
+  'NOVA AI Kotası & Uzun Yanıt': 'NOVA AI Quota & Extended Replies',
+  '100 mesaj/ay (Temel)': '100 msgs/mo (Basic)',
+  '1.000 mesaj/ay (Pro)': '1,000 msgs/mo (Pro)',
+  '100 / Temel': '100 msgs/mo (Basic)',
+  '1000+ / Pro': '1,000 msgs/mo (Pro)',
+  "Premium'u nasıl iptal edebilirim?": 'How can I cancel Premium?',
+  "Ayarlar > Abonelik Yönetimi'nden istediğiniz zaman iptal edebilirsiniz. Mevcut dönem sonuna kadar erişiminiz sürer.":
+    'You can cancel anytime from Settings > Subscription Management. Access continues until the end of your current billing period.',
+  'Farklı cihazlarda kullanabilir miyim?': 'Can I use it across different devices?',
+  'Evet, aynı hesapla giriş yaptığınız tüm cihazlarda premium özellikleriniz otomatik aktif olur.':
+    'Yes, your Premium features automatically sync across every device signed in with the same account.',
+  'Deneme süresi var mı?': 'Is there a free trial?',
+  'İlk kez abone olan kullanıcılar 7 günlük ücretsiz deneme süresi boyunca tüm özellikleri deneyimleyebilir.':
+    'First-time subscribers can explore all Premium features during a 7-day free trial.',
+  'Aylık ve yıllık plan arasındaki fark nedir?': 'What is the difference between Monthly and Yearly plans?',
+  'Her iki plan da tüm premium özellikleri içerir. Yıllık plan ile %17 tasarruf sağlarsınız.':
+    'Both plans include all Premium features. Choosing the Yearly plan saves 17%.',
+  'Ödeme güvenli mi?': 'Are payments secure?',
+  'Tüm ödemeler Apple App Store veya Google Play Store altyapısı üzerinden güvenle işlenir.':
+    'All payments are securely processed through Apple App Store or Google Play Store.',
+};
+
+function trToEn(text?: string): string | undefined {
+  if (!text) return text;
+  return PAYWALL_TEXT_EN[text] || text;
+}
+
+export function localizePaywall(
+  paywall: PaywallConfig | null,
+  locale: Locale,
+): PaywallConfig | null {
+  if (!paywall || locale !== 'en') return paywall;
+
+  return {
+    ...paywall,
+    heroBadge: trToEn(paywall.heroBadge),
+    heroTitle: trToEn(paywall.heroTitle) || paywall.heroTitle,
+    heroSubtitle: trToEn(paywall.heroSubtitle) || paywall.heroSubtitle,
+    plans: {
+      MONTHLY: {
+        ...paywall.plans.MONTHLY,
+        title: trToEn(paywall.plans.MONTHLY.title) || paywall.plans.MONTHLY.title,
+        subtitle: trToEn(paywall.plans.MONTHLY.subtitle),
+        badge: trToEn(paywall.plans.MONTHLY.badge),
+        badgeText: trToEn(paywall.plans.MONTHLY.badgeText),
+        savingsText: trToEn(paywall.plans.MONTHLY.savingsText),
+        features: (paywall.plans.MONTHLY.features || []).map((f) => trToEn(f) || f),
+      },
+      YEARLY: {
+        ...paywall.plans.YEARLY,
+        title: trToEn(paywall.plans.YEARLY.title) || paywall.plans.YEARLY.title,
+        subtitle: trToEn(paywall.plans.YEARLY.subtitle),
+        badge: trToEn(paywall.plans.YEARLY.badge),
+        badgeText: trToEn(paywall.plans.YEARLY.badgeText),
+        savingsText: trToEn(paywall.plans.YEARLY.savingsText),
+        features: (paywall.plans.YEARLY.features || []).map((f) => trToEn(f) || f),
+      },
+    },
+    comparisonRows: (paywall.comparisonRows || []).map((row) => ({
+      ...row,
+      title: trToEn(row.title) || row.title,
+      freeValue: typeof row.freeValue === 'string' ? trToEn(row.freeValue) || row.freeValue : row.freeValue,
+      premiumValue:
+        typeof row.premiumValue === 'string' ? trToEn(row.premiumValue) || row.premiumValue : row.premiumValue,
+    })),
+    faq: (paywall.faq || []).map((item) => ({
+      question: trToEn(item.question) || item.question,
+      answer: trToEn(item.answer) || item.answer,
+    })),
+  };
+}

@@ -18,6 +18,7 @@ import { useTheme } from '@/hooks/useTheme';
 import { wellnessService } from '@/services/api';
 import { useAuthStore } from '@/store/authStore';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 
 const { width } = Dimensions.get('window');
 const BAR_WIDTH = (width - 80) / 7;
@@ -114,6 +115,8 @@ export default function SleepScreen() {
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['sleep'] });
       await queryClient.invalidateQueries({ queryKey: ['homeSnapshot'] });
+      await queryClient.invalidateQueries({ queryKey: ['dailyTasks'] });
+      await queryClient.invalidateQueries({ queryKey: ['gamification'] });
       await refetch();
       setModalVisible(false);
       setHoursInput('');
@@ -301,18 +304,20 @@ export default function SleepScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
-      {/* Header */}
+      {/* Modern Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-          <Text style={styles.backButtonText}>Geri</Text>
+        <TouchableOpacity onPress={() => router.back()} style={styles.headerCircleBtn}>
+          <Ionicons name="chevron-back" size={20} color={theme.colors.text} />
         </TouchableOpacity>
         <View style={styles.headerTitleContainer}>
-          <Text style={styles.headerTitle}>Uyku</Text>
+          <Text style={styles.headerTitle}>Uyku Takibi</Text>
           <Text style={styles.headerSubtitle}>
             {new Date().toLocaleDateString('tr-TR', { day: 'numeric', month: 'long' })}
           </Text>
         </View>
-        <View style={styles.headerRight} />
+        <TouchableOpacity onPress={() => setGoalModalVisible(true)} style={styles.headerCircleBtn}>
+          <Ionicons name="options-outline" size={19} color="#6366F1" />
+        </TouchableOpacity>
       </View>
 
       <ScrollView
@@ -320,74 +325,83 @@ export default function SleepScreen() {
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={theme.colors.primary} />
+          <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor="#6366F1" />
         }
       >
-        {/* Last Night Card */}
-        <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <Text style={styles.cardTitle}>Dün Gece</Text>
-            {stats.lastNight && (
-              <View style={styles.qualityChip}>
-                <Text style={styles.qualityText}>
-                  {getQualityEmoji(stats.lastNight.quality)} {getQualityLabel(stats.lastNight.quality)}
-                </Text>
-              </View>
-            )}
+        {/* Midnight Indigo Gradient Hero Card */}
+        <LinearGradient
+          colors={['#312E81', '#4F46E5', '#7C3AED']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.heroCard}
+        >
+          <View style={styles.heroTopRow}>
+            <View style={styles.heroBadge}>
+              <Ionicons name="moon" size={14} color="#FFFFFF" />
+              <Text style={styles.heroBadgeText}>DÜN GECE UYKUSU</Text>
+            </View>
+            <View style={styles.heroPctPill}>
+              <Text style={styles.heroPctText}>
+                {stats.lastNight
+                  ? stats.lastNight.quality
+                    ? `${getQualityEmoji(stats.lastNight.quality)} ${getQualityLabel(stats.lastNight.quality)}`
+                    : `%${percentage}`
+                  : 'Kayıt Yok'}
+              </Text>
+            </View>
           </View>
 
           {stats.lastNight ? (
             <>
-              <View style={styles.metricContainer}>
-                <Text style={styles.metricValue}>{formatHours(stats.lastNight.durationMin)}</Text>
+              <Text style={styles.heroMetricValue}>
+                {formatHours(stats.lastNight.durationMin)}
+              </Text>
+              <Text style={styles.heroGoalSub}>
+                Hedef {goal} saat · %{percentage} tamamlandı
+              </Text>
+              <View style={styles.heroProgressTrack}>
+                <View
+                  style={[
+                    styles.heroProgressFill,
+                    { width: `${Math.min(percentage, 100)}%` },
+                  ]}
+                />
               </View>
-
-              <View style={styles.progressBarContainer}>
-                <View style={styles.progressBarBackground}>
-                  <View
-                    style={[
-                      styles.progressBarFill,
-                      { width: `${Math.min(percentage, 100)}%` },
-                    ]}
-                  />
+              {stats.lastNight.notes ? (
+                <View style={styles.heroNoteBox}>
+                  <Text style={styles.heroNoteText}>Not: {stats.lastNight.notes}</Text>
                 </View>
-                <Text style={styles.progressText}>
-                  {percentage}% · Hedef {goal} saat
-                </Text>
-              </View>
-
-              {stats.lastNight.notes && (
-                <View style={styles.notesContainer}>
-                  <Text style={styles.notesLabel}>Not:</Text>
-                  <Text style={styles.notesText}>{stats.lastNight.notes}</Text>
-                </View>
-              )}
+              ) : null}
             </>
           ) : (
-            <View style={styles.emptyState}>
-              <Text style={styles.emptyIcon}>😴</Text>
-              <Text style={styles.emptyText}>Dün gece kaydı yok</Text>
-              <Text style={styles.emptySubtext}>Hemen eklemek için butona tıklayın</Text>
+            <View style={styles.heroEmptyBox}>
+              <Text style={styles.heroEmptyTitle}>Dün gece için uyku girilmedi</Text>
+              <Text style={styles.heroEmptySub}>
+                Aşağıdaki hızlı seçeneklerle 1 dokunuşta ekleyebilirsin
+              </Text>
             </View>
           )}
 
-          <View style={styles.actions}>
+          <Text style={styles.heroQuickLabel}>Hızlı uyku kaydet:</Text>
+          <View style={styles.heroQuickRow}>
+            {[6, 7, 7.5, 8].map((hrs) => (
+              <TouchableOpacity
+                key={hrs}
+                style={styles.heroQuickBtn}
+                disabled={logSleepMutation.isPending}
+                onPress={() => handleQuickLog(hrs, 'good')}
+              >
+                <Text style={styles.heroQuickBtnText}>{hrs} s</Text>
+              </TouchableOpacity>
+            ))}
             <TouchableOpacity
-              style={[styles.actionButton, styles.actionButtonPrimary]}
+              style={[styles.heroQuickBtn, styles.heroQuickBtnSolid]}
               onPress={() => setModalVisible(true)}
             >
-              <Text style={styles.actionButtonTextPrimary}>
-                {stats.lastNight ? 'Düzenle' : 'Uyku Ekle'}
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.actionButton}
-              onPress={() => setGoalModalVisible(true)}
-            >
-              <Text style={styles.actionButtonText}>Hedefi Düzenle</Text>
+              <Text style={styles.heroQuickBtnSolidText}>Detaylı</Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </LinearGradient>
 
         {/* Weekly Chart */}
         <View style={styles.card}>
@@ -395,24 +409,30 @@ export default function SleepScreen() {
 
           <View style={styles.chartContainer}>
             {last7Nights.map((night, index) => {
-              const barHeight = maxHours > 0 ? (night.durationMin / 60 / maxHours) * 120 : 0;
+              const hoursVal = night.durationMin / 60;
+              const barHeight = maxHours > 0 ? (hoursVal / maxHours) * 116 : 0;
               const isGoalReached = night.durationMin >= goalMin;
-              const qualityColor =
-                night.quality === 'good'
-                  ? theme.colors.primary
-                  : night.quality === 'medium'
-                  ? theme.colors.textSecondary + '60'
-                  : theme.colors.textSecondary + '40';
+              const barColor =
+                night.durationMin === 0
+                  ? theme.colors.backgroundSecondary
+                  : isGoalReached
+                    ? '#6366F1'
+                    : night.quality === 'poor'
+                      ? '#F59E0B'
+                      : '#818CF8';
 
               return (
                 <View key={index} style={styles.barContainer}>
+                  <Text style={styles.barValLabel}>
+                    {night.durationMin > 0 ? `${hoursVal.toFixed(1).replace(/\.0$/, '')}s` : ''}
+                  </Text>
                   <View style={styles.barWrapper}>
                     <View
                       style={[
                         styles.bar,
                         {
-                          height: barHeight || 4,
-                          backgroundColor: night.durationMin > 0 ? qualityColor : theme.colors.backgroundSecondary,
+                          height: night.durationMin > 0 ? Math.max(barHeight, 6) : 3,
+                          backgroundColor: barColor,
                         },
                       ]}
                     />
@@ -1079,5 +1099,148 @@ const createStyles = (theme: ReturnType<typeof useTheme>) =>
       fontSize: 16,
       fontWeight: '600',
       color: theme.colors.textOnPrimary,
+    },
+    headerCircleBtn: {
+      width: 38,
+      height: 38,
+      borderRadius: 14,
+      backgroundColor: theme.colors.backgroundCard,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    heroCard: {
+      borderRadius: 24,
+      padding: 20,
+      marginBottom: theme.spacing.lg,
+      shadowColor: '#4F46E5',
+      shadowOffset: { width: 0, height: 8 },
+      shadowOpacity: 0.28,
+      shadowRadius: 16,
+      elevation: 6,
+    },
+    heroTopRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 14,
+    },
+    heroBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      backgroundColor: 'rgba(255,255,255,0.18)',
+      paddingHorizontal: 10,
+      paddingVertical: 5,
+      borderRadius: 999,
+    },
+    heroBadgeText: {
+      color: '#FFFFFF',
+      fontSize: 10.5,
+      fontWeight: '800',
+      letterSpacing: 0.7,
+    },
+    heroPctPill: {
+      backgroundColor: 'rgba(255,255,255,0.92)',
+      paddingHorizontal: 10,
+      paddingVertical: 4,
+      borderRadius: 999,
+    },
+    heroPctText: {
+      color: '#4338CA',
+      fontSize: 12,
+      fontWeight: '800',
+    },
+    heroMetricValue: {
+      fontSize: 40,
+      fontWeight: '900',
+      color: '#FFFFFF',
+      letterSpacing: -0.8,
+      marginBottom: 4,
+    },
+    heroGoalSub: {
+      fontSize: 13,
+      fontWeight: '600',
+      color: 'rgba(255,255,255,0.85)',
+      marginBottom: 12,
+    },
+    heroProgressTrack: {
+      height: 8,
+      borderRadius: 999,
+      backgroundColor: 'rgba(255,255,255,0.22)',
+      overflow: 'hidden',
+      marginBottom: 14,
+    },
+    heroProgressFill: {
+      height: '100%',
+      borderRadius: 999,
+      backgroundColor: '#FFFFFF',
+    },
+    heroNoteBox: {
+      backgroundColor: 'rgba(255,255,255,0.14)',
+      borderRadius: 12,
+      padding: 10,
+      marginBottom: 12,
+    },
+    heroNoteText: {
+      color: '#FFFFFF',
+      fontSize: 12.5,
+      lineHeight: 17,
+    },
+    heroEmptyBox: {
+      paddingVertical: 10,
+      marginBottom: 10,
+    },
+    heroEmptyTitle: {
+      fontSize: 18,
+      fontWeight: '800',
+      color: '#FFFFFF',
+      marginBottom: 4,
+    },
+    heroEmptySub: {
+      fontSize: 12.5,
+      color: 'rgba(255,255,255,0.82)',
+    },
+    heroQuickLabel: {
+      color: 'rgba(255,255,255,0.88)',
+      fontSize: 12,
+      fontWeight: '700',
+      marginBottom: 8,
+    },
+    heroQuickRow: {
+      flexDirection: 'row',
+      gap: 7,
+    },
+    heroQuickBtn: {
+      flex: 1,
+      backgroundColor: 'rgba(255,255,255,0.16)',
+      paddingVertical: 9,
+      borderRadius: 12,
+      alignItems: 'center',
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.25)',
+    },
+    heroQuickBtnText: {
+      color: '#FFFFFF',
+      fontSize: 12.5,
+      fontWeight: '800',
+    },
+    heroQuickBtnSolid: {
+      flex: 1.35,
+      backgroundColor: '#FFFFFF',
+      borderColor: '#FFFFFF',
+    },
+    heroQuickBtnSolidText: {
+      color: '#4338CA',
+      fontSize: 12.5,
+      fontWeight: '800',
+    },
+    barValLabel: {
+      fontSize: 10,
+      fontWeight: '700',
+      color: theme.colors.textSecondary,
+      marginBottom: 4,
+      height: 14,
     },
   });

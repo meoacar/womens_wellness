@@ -14,12 +14,20 @@ export default function OvulationCalculatorScreen() {
     const [result, setResult] = useState<any>(null);
 
     const handleCalculate = () => {
+        const baseLmp = new Date(
+            lastPeriodDate.getFullYear(),
+            lastPeriodDate.getMonth(),
+            lastPeriodDate.getDate(),
+            12,
+            0,
+            0,
+        );
         // Ovulation typically occurs 14 days before next period
         const ovulationDay = cycleLength - 14;
-        const ovulationDate = new Date(lastPeriodDate);
+        const ovulationDate = new Date(baseLmp);
         ovulationDate.setDate(ovulationDate.getDate() + ovulationDay);
 
-        // Fertile window: 5 days before ovulation + ovulation day
+        // Fertile window: 5 days before ovulation + ovulation day + 1 day after
         const fertileStart = new Date(ovulationDate);
         fertileStart.setDate(fertileStart.getDate() - 5);
 
@@ -27,7 +35,7 @@ export default function OvulationCalculatorScreen() {
         fertileEnd.setDate(fertileEnd.getDate() + 1);
 
         // Next period
-        const nextPeriod = new Date(lastPeriodDate);
+        const nextPeriod = new Date(baseLmp);
         nextPeriod.setDate(nextPeriod.getDate() + cycleLength);
 
         setResult({

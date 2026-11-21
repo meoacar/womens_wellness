@@ -19,6 +19,8 @@ import {
     requestPurchase,
     finishTransaction,
     getAvailablePurchases,
+    getReceiptDataIOS,
+    getTransactionJwsIOS,
     purchaseUpdatedListener,
     purchaseErrorListener,
     type Product,
@@ -28,6 +30,45 @@ import {
 import { getAllProductIds, getProductId, type SubscriptionTier } from '../config/iap.config';
 import { subscriptionService } from './api';
 import { subscriptionSyncService } from './subscriptionSync';
+import type { PurchaseRequest } from '../types/subscription';
+
+export function buildPurchaseVerificationPayload(
+    purchase: Purchase,
+    platformOS: string = Platform.OS,
+): PurchaseRequest | null {
+    const provider = platformOS === 'ios' ? 'APPLE' : 'GOOGLE';
+    const purchaseToken = (
+        (purchase as any).purchaseToken ||
+        (purchase as any).purchaseTokenAndroid ||
+        ''
+    ).trim();
+    const legacyReceipt =
+        platformOS === 'ios'
+            ? ((purchase as any).transactionReceipt || '').trim()
+            : '';
+    const receipt =
+        platformOS === 'ios'
+            ? (purchaseToken || legacyReceipt)
+            : purchaseToken;
+
+    if (!receipt) {
+        return null;
+    }
+
+    const transactionId = (
+        purchase.transactionId ||
+        (provider === 'GOOGLE' ? purchaseToken : '') ||
+        ''
+    ).trim();
+
+    return {
+        receipt,
+        provider,
+        productId: purchase.productId,
+        transactionId,
+        ...(purchaseToken ? { purchaseToken } : {}),
+    };
+}
 
 /**
  * IAP Error Types
@@ -711,14 +752,28 @@ class IAPManager {
                 transactionId: purchase.transactionId,
             });
 
-            // Get platform and receipt
-            const platform = Platform.OS === 'ios' ? 'APPLE' : 'GOOGLE';
-            const receipt = Platform.OS === 'ios'
-                ? (purchase as any).transactionReceipt
-                : (purchase as any).purchaseToken;
+            let payload = buildPurchaseVerificationPayload(purchase);
+
+            if (!payload && Platform.OS === 'ios') {
+                let iosToken = '';
+                if (typeof getTransactionJwsIOS === 'function' && purchase.productId) {
+                    iosToken = ((await getTransactionJwsIOS(purchase.productId)) || '').trim();
+                }
+                let iosLegacyReceipt = '';
+                if (!iosToken && typeof getReceiptDataIOS === 'function') {
+                    iosLegacyReceipt = ((await getReceiptDataIOS()) || '').trim();
+                }
+                if (iosToken || iosLegacyReceipt) {
+                    payload = buildPurchaseVerificationPayload({
+                        ...purchase,
+                        ...(iosToken ? { purchaseToken: iosToken } : {}),
+                        ...(iosLegacyReceipt ? { transactionReceipt: iosLegacyReceipt } : {}),
+                    } as Purchase);
+                }
+            }
 
             // Check receipt exists
-            if (!receipt) {
+            if (!payload) {
                 throw new IAPServiceError(
                     IAPErrorCode.NO_RECEIPT,
                     'No receipt found in purchase object',
@@ -727,9 +782,7 @@ class IAPManager {
                 );
             }
 
-            // Get transaction ID
-            const transactionId = purchase.transactionId || (purchase as any).purchaseToken || '';
-            if (!transactionId) {
+            if (!payload.transactionId) {
                 console.warn('[IAP] No transaction ID found, using empty string');
             }
 
@@ -741,12 +794,7 @@ class IAPManager {
 
             while (retries > 0) {
                 try {
-                    await subscriptionService.processPurchase({
-                        receipt,
-                        provider: platform,
-                        productId: purchase.productId,
-                        transactionId,
-                    });
+                    await subscriptionService.processPurchase(payload);
 
                     // Success - break retry loop
                     break;
@@ -882,12 +930,9 @@ class IAPManager {
                     transactionDate: purchase.transactionDate,
                 });
 
-                // Get receipt
-                const receipt = Platform.OS === 'ios'
-                    ? (purchase as any).transactionReceipt
-                    : (purchase as any).purchaseToken;
-
-                if (!receipt) {
+                // Verify receipt/purchaseToken presence before validating (iOS can fall back to StoreKit receipt/JWS helpers)
+                const payload = buildPurchaseVerificationPayload(purchase);
+                if (!payload && Platform.OS !== 'ios') {
                     console.error('[IAP] No receipt in purchase update');
                     return;
                 }

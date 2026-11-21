@@ -10,6 +10,7 @@ export interface HomeSnapshot {
   user: {
     displayName: string;
     profilePictureUrl?: string;
+    lifeStage?: string;
   };
   streak: {
     current: number;
@@ -126,6 +127,7 @@ export class HomeService {
       user: {
         displayName: user.profile?.displayName || user.email.split('@')[0],
         profilePictureUrl: user.profile?.profilePictureUrl || undefined,
+        lifeStage: user.profile?.lifeStage || 'CYCLE',
       },
       streak,
       todaySnapshot,
@@ -443,12 +445,13 @@ export class HomeService {
     const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
 
     if (!lastNovaPrompt || new Date(lastNovaPrompt) < oneDayAgo) {
+      const proactivePrompt = await this.getProactiveNovaInsight(userId, snapshot);
       cards.push({
         id: 'nova_prompt',
         type: 'nova_prompt',
         priority: 50,
         data: {
-          prompt: this.getNovaPrompt(snapshot),
+          prompt: proactivePrompt,
         },
         isDismissed: false,
         isPinned: pinnedCards.includes('nova_prompt'),
@@ -463,6 +466,51 @@ export class HomeService {
         if (!a.isPinned && b.isPinned) return 1;
         return b.priority - a.priority;
       });
+  }
+
+  private async getProactiveNovaInsight(userId: string, snapshot: any): Promise<string> {
+    try {
+      const profile = await this.prisma.profile.findUnique({
+        where: { userId },
+        select: { lifeStage: true },
+      });
+
+      if (profile?.lifeStage === 'POSTPARTUM') {
+        return 'Anne & Bebek modundasın: Emzirme dönemi beslenme, sıvı dengesi ve lohusa uykusu için NOVA’dan kişisel öneri alabilirsin.';
+      }
+
+      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      const recentSleeps = await this.prisma.sleepLog.findMany({
+        where: { userId, sleepDate: { gte: sevenDaysAgo } },
+        select: { durationMin: true },
+      });
+      if (recentSleeps.length >= 2) {
+        const avgHours =
+          recentSleeps.reduce((s, x) => s + x.durationMin, 0) / recentSleeps.length / 60;
+        if (avgHours < 6.5) {
+          return `Son 7 günde uyku ortalaman ${avgHours.toFixed(1)} saat. Döngü fazına uygun akşam uyku rutini için NOVA’ya sor.`;
+        }
+      }
+
+      const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+      const recentCycleLogs = await this.prisma.dailyLog.findMany({
+        where: { userId, date: { gte: thirtyDaysAgo } },
+        select: { symptoms: true },
+      });
+      const symptomCounts: Record<string, number> = {};
+      for (const log of recentCycleLogs) {
+        for (const sym of log.symptoms || []) {
+          symptomCounts[sym] = (symptomCounts[sym] || 0) + 1;
+        }
+      }
+      const topSymptom = Object.entries(symptomCounts).sort((a, b) => b[1] - a[1])[0];
+      if (topSymptom && topSymptom[1] >= 3) {
+        return `Son 30 günde ${topSymptom[1]} kez "${topSymptom[0]}" kaydı ekledin. Doğal rahatlama ve beslenme önerileri için NOVA’ya sor.`;
+      }
+    } catch {
+      // Fall back to contextual prompt
+    }
+    return this.getNovaPrompt(snapshot);
   }
 
   private getNovaPrompt(snapshot: any): string {

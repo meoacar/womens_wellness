@@ -382,21 +382,24 @@ export class AdminService {
 
         for (const userId of userIds) {
             try {
-                await this.prisma.reminder.create({
-                    data: {
-                        userId,
-                        type: 'CUSTOM',
-                        payloadJson: {
-                            title: notification.title,
-                            body: notification.body,
-                            sentAt: new Date().toISOString(),
-                            source: 'ADMIN_BULK',
-                        },
-                        nextRunAt: new Date(),
-                        active: true,
+                const receipt = await this.pushService.sendPush(
+                    userId,
+                    {
+                        to: '',
+                        sound: 'default',
+                        title: notification.title.trim(),
+                        body: notification.body.trim(),
+                        data: { type: 'ADMIN_BULK', screen: 'home' },
                     },
-                });
-                result.success++;
+                    { ignoreQuietHours: true },
+                );
+
+                if (receipt.status === 'ok' || receipt.status === 'queued') {
+                    result.success++;
+                } else {
+                    result.failed++;
+                    result.errors.push(`User ${userId}: ${receipt.message || 'Bildirim gönderilemedi'}`);
+                }
             } catch (error: any) {
                 result.failed++;
                 result.errors.push(`User ${userId}: ${error.message}`);
@@ -450,6 +453,7 @@ export class AdminService {
      */
     async searchUsers(filters: {
         search?: string;
+        lifeStage?: string;
         status?: UserStatus;
         subscriptionStatus?: SubscriptionStatus;
         createdAfter?: Date;
@@ -462,6 +466,7 @@ export class AdminService {
     }) {
         const {
             search,
+            lifeStage,
             status,
             subscriptionStatus,
             createdAfter,
@@ -475,12 +480,16 @@ export class AdminService {
 
         const andConditions: Prisma.UserWhereInput[] = [];
 
-        // Search in email, username, or profile name
+        // Search in email, username, profile name, or last IP / device
         if (search) {
             andConditions.push({
                 OR: [
                     { email: { contains: search, mode: 'insensitive' } },
                     { username: { contains: search, mode: 'insensitive' } },
+                    { lastIpAddress: { contains: search, mode: 'insensitive' } },
+                    { lastDeviceModel: { contains: search, mode: 'insensitive' } },
+                    { lastOsVersion: { contains: search, mode: 'insensitive' } },
+                    { lastAppVersion: { contains: search, mode: 'insensitive' } },
                     {
                         profile: {
                             OR: [
@@ -496,6 +505,10 @@ export class AdminService {
 
         if (status) {
             andConditions.push({ status });
+        }
+
+        if (lifeStage) {
+            andConditions.push({ profile: { lifeStage } });
         }
 
         if (createdAfter || createdBefore) {
@@ -550,6 +563,9 @@ export class AdminService {
                             dailyLogs: true,
                             questions: true,
                             answers: true,
+                            refreshTokens: true,
+                            errorLogs: true,
+                            kvkkConsentLogs: true,
                         },
                     },
                 },
@@ -586,27 +602,17 @@ export class AdminService {
      * User Impersonation
      */
     async impersonateUser(adminId: string, targetUserId: string) {
-        // Verify admin - check if user has admin email domain
-        const admin = await this.prisma.user.findUnique({
+        // Verify admin via explicit role assignment
+        const adminRecord = await this.prisma.user.findUnique({
             where: { id: adminId },
-            select: { email: true },
+            select: { email: true, isAdmin: true, status: true },
         });
 
-        if (!admin) {
+        if (!adminRecord || adminRecord.status !== 'ACTIVE') {
             throw new BadRequestException('Admin bulunamadı');
         }
 
-        // Check admin status
-        const adminRecord = await this.prisma.user.findUnique({
-            where: { id: adminId },
-            select: { isAdmin: true, email: true },
-        });
-        const isAdmin =
-            Boolean(adminRecord?.isAdmin) ||
-            admin.email.endsWith('@admin.wellnesscompanion.com') ||
-            (process.env.ADMIN_EMAILS || '').split(',').includes(admin.email);
-
-        if (!isAdmin) {
+        if (!adminRecord.isAdmin) {
             throw new BadRequestException('Admin yetkisi gerekli');
         }
 
@@ -631,7 +637,7 @@ export class AdminService {
                 entity: 'User',
                 entityId: targetUserId,
                 metadataJson: {
-                    adminEmail: admin.email,
+                    adminEmail: adminRecord.email,
                     targetEmail: targetUser.email,
                     timestamp: new Date().toISOString(),
                 },
@@ -863,7 +869,16 @@ export class AdminService {
             throw new NotFoundException('Kullanıcı bulunamadı.');
         }
 
-        const [recentCycles, ticketFlags] = await Promise.all([
+        const [
+            recentCycles,
+            ticketFlags,
+            partnerLink,
+            refreshTokens,
+            errorLogs,
+            kvkkConsentLogs,
+            impersonationLogs,
+            serverErrorAudits,
+        ] = await Promise.all([
             this.prisma.periodCycle.findMany({
                 where: { userId },
                 orderBy: { startDate: 'desc' },
@@ -871,6 +886,35 @@ export class AdminService {
             }),
             this.prisma.featureFlag.findMany({
                 where: { key: { startsWith: 'support_ticket_' } },
+            }),
+            this.prisma.partnerLink.findFirst({
+                where: { OR: [{ ownerUserId: userId }, { partnerUserId: userId }] },
+                select: { id: true },
+            }),
+            this.prisma.refreshToken.findMany({
+                where: { userId },
+                orderBy: { createdAt: 'desc' },
+                take: 30,
+            }),
+            this.prisma.userErrorLog.findMany({
+                where: { userId },
+                orderBy: { createdAt: 'desc' },
+                take: 50,
+            }),
+            this.prisma.kvkkConsentLog.findMany({
+                where: { userId },
+                orderBy: { consentedAt: 'desc' },
+                take: 50,
+            }),
+            this.prisma.auditLog.findMany({
+                where: { entityId: userId, action: 'USER_IMPERSONATION' },
+                orderBy: { createdAt: 'desc' },
+                take: 10,
+            }),
+            this.prisma.auditLog.findMany({
+                where: { userId, action: 'SERVER_ERROR' },
+                orderBy: { createdAt: 'desc' },
+                take: 20,
             }),
         ]);
 
@@ -880,15 +924,219 @@ export class AdminService {
             .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
         const prefs = ((user.profile?.preferencesJson as Record<string, any>) || {});
+        const now = new Date();
+
+        const formattedSessions = refreshTokens.map((t) => {
+            const status = t.revokedAt
+                ? t.replacedById
+                    ? 'ROTATED'
+                    : 'REVOKED'
+                : t.expiresAt <= now
+                  ? 'EXPIRED'
+                  : 'ACTIVE';
+            return {
+                id: t.id,
+                familyId: t.familyId,
+                accessJti: t.accessJti || null,
+                tokenHashPreview: `sha256:${t.tokenHash.slice(0, 8)}...${t.tokenHash.slice(-6)}`,
+                ipAddress: t.ipAddress || null,
+                deviceModel: t.deviceModel || null,
+                osVersion: t.osVersion || null,
+                appVersion: t.appVersion || null,
+                userAgent: t.userAgent || null,
+                createdAt: t.createdAt,
+                lastUsedAt: t.lastUsedAt,
+                expiresAt: t.expiresAt,
+                revokedAt: t.revokedAt,
+                replacedById: t.replacedById,
+                status,
+            };
+        });
+
+        const activeSessionsCount = formattedSessions.filter((s) => s.status === 'ACTIVE').length;
+        const latestActiveSession =
+            formattedSessions.find((s) => s.status === 'ACTIVE') || formattedSessions[0] || null;
+
+        const kvkkPrefs = (prefs.kvkkConsents as Record<string, any>) || {};
+        const latestLogByType = new Map<string, typeof kvkkConsentLogs[number]>();
+        for (const row of kvkkConsentLogs) {
+            if (!latestLogByType.has(row.consentType)) {
+                latestLogByType.set(row.consentType, row);
+            }
+        }
+
+        const consentDefinitions: Array<{
+            consentType: string;
+            label: string;
+            prefKey: string;
+            required?: boolean;
+        }> = [
+            {
+                consentType: 'PRIVACY_POLICY_AND_TERMS',
+                label: 'Gizlilik Politikası ve Kullanım Koşulları',
+                prefKey: 'privacyPolicyAccepted',
+                required: true,
+            },
+            {
+                consentType: 'DATA_PROCESSING',
+                label: 'Temel & Sağlık Verisi İşleme (KVKK m.6)',
+                prefKey: 'dataProcessing',
+                required: true,
+            },
+            {
+                consentType: 'AI_MEMORY',
+                label: 'NOVA AI Kişisel Hafıza İzni',
+                prefKey: 'aiMemoryConsent',
+            },
+            {
+                consentType: 'MARKETING',
+                label: 'Pazarlama & Kampanya İletişimi',
+                prefKey: 'marketingConsent',
+            },
+            {
+                consentType: 'ANALYTICS',
+                label: 'Anonim Kullanım Analitiği',
+                prefKey: 'analyticsConsent',
+            },
+            {
+                consentType: 'THIRD_PARTY',
+                label: 'Üçüncü Taraf Hizmet Paylaşımı',
+                prefKey: 'thirdPartyConsent',
+            },
+        ];
+
+        const kvkkSummary = consentDefinitions.map((def) => {
+            const log = latestLogByType.get(def.consentType);
+            const prefVal = kvkkPrefs[def.prefKey];
+            const granted = log
+                ? log.granted
+                : typeof prefVal === 'boolean'
+                  ? prefVal
+                  : Boolean(def.required);
+            const fallbackTimestamp =
+                kvkkPrefs[`${def.prefKey}At`] ||
+                (def.consentType === 'PRIVACY_POLICY_AND_TERMS' ? kvkkPrefs.privacyAcceptedAt : undefined) ||
+                kvkkPrefs.updatedAt ||
+                (def.required ? user.createdAt : null);
+
+            return {
+                consentType: def.consentType,
+                label: def.label,
+                required: Boolean(def.required),
+                granted,
+                consentedAt: log ? log.consentedAt : fallbackTimestamp || null,
+                version: log?.version || kvkkPrefs.version || '1.0',
+                source: log?.source || (def.required && !log && !kvkkPrefs.updatedAt ? 'KAYIT' : 'AYARLAR'),
+                ipAddress: log?.ipAddress || null,
+                deviceModel: log?.deviceModel || null,
+            };
+        });
+
+        const fallbackAuditErrors =
+            errorLogs.length === 0
+                ? serverErrorAudits.map((a) => {
+                      const meta = (a.metadataJson as Record<string, any>) || {};
+                      return {
+                          id: `audit-${a.id}`,
+                          userId: a.userId,
+                          source: 'API',
+                          level: 'FATAL',
+                          statusCode: meta.status || 500,
+                          method: meta.method || null,
+                          path: meta.path || null,
+                          message: meta.message || 'Sunucu Hatası',
+                          stack: null,
+                          ipAddress: meta.ipAddress || null,
+                          deviceModel: meta.deviceModel || null,
+                          osVersion: null,
+                          appVersion: null,
+                          createdAt: a.createdAt,
+                      };
+                  })
+                : [];
+
         const { password: _p, pinHash: _ph, ...safeUser } = user;
 
         return {
             user: safeUser,
             hasPushToken: Boolean(prefs.pushToken),
-            partnerConnected: Boolean(prefs.partnerLink),
+            partnerConnected: Boolean(partnerLink),
             recentCycles,
             supportTickets: userTickets,
+            deviceTelemetry: {
+                lastIpAddress: user.lastIpAddress || latestActiveSession?.ipAddress || null,
+                lastDeviceModel: user.lastDeviceModel || latestActiveSession?.deviceModel || null,
+                lastOsVersion: user.lastOsVersion || latestActiveSession?.osVersion || null,
+                lastAppVersion: user.lastAppVersion || latestActiveSession?.appVersion || null,
+                lastUserAgent: user.lastUserAgent || latestActiveSession?.userAgent || null,
+                lastSeenAt: user.lastSeenAt || user.updatedAt,
+            },
+            jwtSummary: {
+                algorithm: 'HS256',
+                accessTokenTtlMin: Number(process.env.ACCESS_TOKEN_TTL_MIN) || 15,
+                refreshTokenTtlDays: Number(process.env.REFRESH_TOKEN_TTL_DAYS) || 30,
+                activeSessionCount: activeSessionsCount,
+                totalSessionCount: formattedSessions.length,
+                latestAccessJti: latestActiveSession?.accessJti || null,
+                sessionsRevokedAt: user.sessionsRevokedAt || null,
+            },
+            sessions: formattedSessions,
+            impersonationLogs: impersonationLogs.map((l) => ({
+                id: l.id,
+                createdAt: l.createdAt,
+                metadata: l.metadataJson,
+            })),
+            errorLogs: [...errorLogs, ...fallbackAuditErrors],
+            kvkk: {
+                summary: kvkkSummary,
+                logs: kvkkConsentLogs,
+            },
         };
+    }
+
+    async revokeUserSessionFamily(adminId: string, userId: string, familyId: string) {
+        const result = await this.prisma.refreshToken.updateMany({
+            where: { userId, familyId, revokedAt: null },
+            data: { revokedAt: new Date() },
+        });
+
+        await this.prisma.auditLog.create({
+            data: {
+                userId: adminId,
+                action: 'SESSION_REVOKED',
+                entity: 'User',
+                entityId: userId,
+                metadataJson: { familyId, revokedCount: result.count },
+            },
+        });
+
+        return { success: true, familyId, revokedCount: result.count };
+    }
+
+    async revokeAllUserSessions(adminId: string, userId: string) {
+        const now = new Date();
+        const [revoked] = await Promise.all([
+            this.prisma.refreshToken.updateMany({
+                where: { userId, revokedAt: null },
+                data: { revokedAt: now },
+            }),
+            this.prisma.user.update({
+                where: { id: userId },
+                data: { sessionsRevokedAt: now },
+            }),
+        ]);
+
+        await this.prisma.auditLog.create({
+            data: {
+                userId: adminId,
+                action: 'ALL_SESSIONS_REVOKED',
+                entity: 'User',
+                entityId: userId,
+                metadataJson: { revokedCount: revoked.count, revokedAt: now.toISOString() },
+            },
+        });
+
+        return { success: true, revokedCount: revoked.count, revokedAt: now.toISOString() };
     }
 
     async sendDirectPushToUser(userId: string, title: string, body: string) {
@@ -900,13 +1148,17 @@ export class AdminService {
             throw new NotFoundException('Kullanıcı bulunamadı.');
         }
 
-        const receipt = await this.pushService.sendPush(userId, {
-            to: '',
-            sound: 'default',
-            title: title.trim(),
-            body: body.trim(),
-            data: { type: 'ADMIN_DIRECT', screen: 'home' },
-        });
+        const receipt = await this.pushService.sendPush(
+            userId,
+            {
+                to: '',
+                sound: 'default',
+                title: title.trim(),
+                body: body.trim(),
+                data: { type: 'ADMIN_DIRECT', screen: 'home' },
+            },
+            { ignoreQuietHours: true },
+        );
 
         return {
             userId,

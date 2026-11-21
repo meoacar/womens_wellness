@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        service: [api, admin, astrology]
+        service: [api, admin, web, astrology]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -26,9 +26,13 @@ jobs:
       - name: Test build ${{ matrix.service }}
         run: |
           if [ "${{ matrix.service }}" = "astrology" ]; then
-            docker build -f apps/astrology-service/Dockerfile apps/astrology-service
+            docker build --target production -f apps/astrology-service/Dockerfile .
           else
-            docker build -f apps/${{ matrix.service }}/Dockerfile .
+            docker build --target production \
+              --build-arg NEXT_PUBLIC_API_BASE_URL=https://api.kadinatlasi.com \
+              --build-arg NEXT_PUBLIC_WEB_URL=https://kadinatlasi.com \
+              --build-arg NEXT_PUBLIC_SITE_URL=https://kadinatlasi.com \
+              -f apps/${{ matrix.service }}/Dockerfile .
           fi
 
   test-docker-compose:

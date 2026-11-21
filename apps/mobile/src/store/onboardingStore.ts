@@ -17,7 +17,9 @@ export interface OnboardingData {
 
   // Step 3: Privacy & Consents
   acceptPrivacy?: boolean;
+  privacyAcceptedAt?: string;
   aiMemoryOptIn?: boolean;
+  aiMemoryAcceptedAt?: string;
 
   // Step 4: Notification Preferences
   notificationIntensity?: 'light' | 'medium' | 'high';

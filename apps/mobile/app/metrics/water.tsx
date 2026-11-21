@@ -5,13 +5,14 @@ import { useRouter } from 'expo-router';
 import { useMutation } from '@tanstack/react-query';
 import { metricsService } from '@/services/api';
 import { useTheme } from '@/hooks/useTheme';
+import { parseLocaleNumber, validateWeightKg } from '@/utils/numberInput';
 
 export default function WaterCalculatorScreen() {
   const theme = useTheme();
   const router = useRouter();
   const [weight, setWeight] = useState('');
   const [activity, setActivity] = useState('moderate');
-  const [climate, setClimate] = useState('moderate');
+  const [climate, setClimate] = useState('temperate');
   const [result, setResult] = useState<any>(null);
 
   const calculateWaterMutation = useMutation({
@@ -22,13 +23,11 @@ export default function WaterCalculatorScreen() {
       let dailyWaterMl = data?.dailyWaterMl || data?.dailyNeedMl;
 
       if (!dailyWaterMl) {
-        console.log('Backend returned null, calculating on frontend');
-        const w = parseFloat(weight);
+        const w = parseLocaleNumber(weight);
         const base = w * 33;
-        const activityMultiplier = activity === 'low' ? 1.0 : activity === 'high' ? 1.3 : 1.15;
-        const climateBonus = climate === 'cold' ? 0 : climate === 'hot' ? 500 : 250;
+        const activityMultiplier = activity === 'sedentary' ? 1.0 : activity === 'active' ? 1.3 : 1.15;
+        const climateBonus = climate === 'cool' ? 0 : climate === 'hot' ? 500 : 250;
         dailyWaterMl = Math.round(base * activityMultiplier + climateBonus);
-        console.log('Frontend calculated:', dailyWaterMl);
       }
 
       setResult({ dailyWaterMl });
@@ -39,25 +38,24 @@ export default function WaterCalculatorScreen() {
   });
 
   const handleCalculate = () => {
-    const w = parseFloat(weight);
-
-    if (isNaN(w) || w <= 0) {
-      Alert.alert('Hata', 'Lütfen geçerli bir kilo değeri girin');
+    const weightCheck = validateWeightKg(weight);
+    if (weightCheck.error || !weightCheck.value) {
+      Alert.alert('Hata', weightCheck.error || 'Lütfen geçerli bir kilo değeri girin');
       return;
     }
 
-    calculateWaterMutation.mutate({ weightKg: w, activity, climate });
+    calculateWaterMutation.mutate({ weightKg: weightCheck.value, activity, climate });
   };
 
   const activityLevels = [
-    { value: 'low', label: 'Düşük', desc: 'Hareketsiz yaşam' },
+    { value: 'sedentary', label: 'Düşük', desc: 'Hareketsiz yaşam' },
     { value: 'moderate', label: 'Orta', desc: 'Normal aktivite' },
-    { value: 'high', label: 'Yüksek', desc: 'Aktif yaşam' },
+    { value: 'active', label: 'Yüksek', desc: 'Aktif yaşam' },
   ];
 
   const climateLevels = [
-    { value: 'cold', label: 'Soğuk', desc: 'Serin iklim' },
-    { value: 'moderate', label: 'Ilıman', desc: 'Normal iklim' },
+    { value: 'cool', label: 'Soğuk', desc: 'Serin iklim' },
+    { value: 'temperate', label: 'Ilıman', desc: 'Normal iklim' },
     { value: 'hot', label: 'Sıcak', desc: 'Sıcak iklim' },
   ];
 
@@ -176,9 +174,9 @@ export default function WaterCalculatorScreen() {
               <Text style={styles.equivalentsTitle}>Eşdeğerleri</Text>
               <View style={styles.equivalentRow}>
                 <Text style={styles.equivalentIcon}>🥤</Text>
-                <Text style={styles.equivalentLabel}>Bardak (250ml)</Text>
+                <Text style={styles.equivalentLabel}>Bardak (200ml)</Text>
                 <Text style={styles.equivalentValue}>
-                  {Math.round((result.dailyWaterMl || 2000) / 250)} bardak
+                  {Math.round((result.dailyWaterMl || 2000) / 200)} bardak
                 </Text>
               </View>
               <View style={styles.equivalentRow}>

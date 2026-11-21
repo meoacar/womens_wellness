@@ -26,7 +26,7 @@ let loggedOnce = false;
  * `SourceCode.getConstants().scriptURL` expose the Metro host IP (e.g. 192.168.1.92).
  */
 export function getApiBaseUrl(): string {
-  const configured = process.env.EXPO_PUBLIC_API_BASE_URL || 'http://localhost:4000';
+  const configured = process.env.EXPO_PUBLIC_API_BASE_URL || 'https://api.kadinatlasi.com';
   let resolved = configured;
 
   if (

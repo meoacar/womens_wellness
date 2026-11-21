@@ -63,7 +63,7 @@ Response: `Wellness API v1.0 - Women's Wellness Companion`
 
 **Eklenecek**:
 ```
-REDIS_URL=redis://default:AZRaAAIncDE1YTdjNmQ2OTdmYTc0Y2RhYjYzMjc4NGU4YjI3N2FkN3AxMzc5Nzg@accepted-amoeba-37978.upstash.io:6379
+REDIS_URL=redis://default:<ROTATED_REDIS_PASSWORD>@<UPSTASH_HOST>.upstash.io:6379
 ```
 
 ---

@@ -7,22 +7,26 @@ on:
       - 'v*'
 
 env:
-  PNPM_VERSION: 10.14.0
-  NODE_VERSION: 20
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  # Build and Push Docker Images
+  # Mandatory CI gate before publishing images or deploying
+  ci:
+    name: Mandatory CI Verification
+    uses: ./.github/workflows/ci.yml
+    secrets: inherit
+
+  # Build and Push Docker Images only after CI succeeds
   build-and-push:
     name: Build & Push Docker Images
     runs-on: ubuntu-latest
+    needs: ci
     permissions:
       contents: read
       packages: write
     strategy:
       matrix:
-        service: [api, admin, astrology]
+        service: [api, admin, web, astrology]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -37,60 +41,289 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Normalize image repository name
+        id: repo
+        run: echo "name=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
       - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-${{ matrix.service }}
+          images: ${{ env.REGISTRY }}/${{ steps.repo.outputs.name }}-${{ matrix.service }}
           tags: |
             type=ref,event=branch
-            type=ref,event=pr
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=sha
+            type=sha,format=short
 
       - name: Build and push ${{ matrix.service }}
         uses: docker/build-push-action@v5
         with:
-          context: ${{ matrix.service == 'astrology' && './apps/astrology-service' || '.' }}
+          context: .
           file: ${{ matrix.service == 'astrology' && './apps/astrology-service/Dockerfile' || format('./apps/{0}/Dockerfile', matrix.service) }}
+          target: production
           push: true
+          build-args: |
+            NEXT_PUBLIC_API_BASE_URL=${{ vars.NEXT_PUBLIC_API_BASE_URL || 'https://api.kadinatlasi.com' }}
+            NEXT_PUBLIC_WEB_URL=${{ vars.NEXT_PUBLIC_WEB_URL || 'https://kadinatlasi.com' }}
+            NEXT_PUBLIC_SITE_URL=${{ vars.NEXT_PUBLIC_SITE_URL || 'https://kadinatlasi.com' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          target: production
 
-  # Deploy to Production
+  # Deploy to Production (tag releases only, after CI & image push succeed)
   deploy:
     name: Deploy to Production
     runs-on: ubuntu-latest
-    needs: build-and-push
+    needs: [ci, build-and-push]
     if: startsWith(github.ref, 'refs/tags/v')
     environment:
       name: production
-      url: https://your-domain.com
+      url: https://kadinatlasi.com
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Compute release image tag and repository
+        id: release
+        run: |
+          echo "repo=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+          echo "tag=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Package deployment configuration bundle
+        id: bundle
+        run: |
+          tar -czf /tmp/deploy-bundle.tar.gz \
+            docker-compose.prod.yml \
+            .env.server.example \
+            nginx/nginx.conf \
+            nginx/nginx-http.conf \
+            scripts/production-deploy.sh
+          BUNDLE_B64=$(base64 -w 0 /tmp/deploy-bundle.tar.gz)
+          echo "DEPLOY_BUNDLE_B64=${BUNDLE_B64}" >> "$GITHUB_ENV"
+
       - name: Deploy to server
+        id: deploy
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.PRODUCTION_HOST }}
+          username: ${{ secrets.PRODUCTION_USER }}
+          key: ${{ secrets.PRODUCTION_SSH_KEY }}
+          envs: DEPLOY_BUNDLE_B64
+          script: |
+            set -Eeuo pipefail
+            mkdir -p /opt/wellness-app
+            cd /opt/wellness-app
+
+            # Back up previous server deployment configs and release tag before syncing
+            BACKUP_DIR="/opt/wellness-app/.deploy-backup"
+            rm -rf "$BACKUP_DIR"
+            mkdir -p "$BACKUP_DIR/nginx" "$BACKUP_DIR/scripts"
+            for rel_file in docker-compose.prod.yml .env.server.example nginx/nginx.conf nginx/nginx-http.conf scripts/production-deploy.sh .deploy-current-tag; do
+              if [ -f "$rel_file" ]; then
+                cp -a "$rel_file" "${BACKUP_DIR}/${rel_file}"
+              fi
+            done
+
+            # Sync compose, nginx, and deploy script from the checked-out release tag (preserving .env* and nginx/ssl/)
+            STAGE_DIR=$(mktemp -d)
+            printf '%s' "$DEPLOY_BUNDLE_B64" | base64 -d | tar -xzf - -C "$STAGE_DIR"
+            mkdir -p nginx scripts
+            cp -f "$STAGE_DIR/docker-compose.prod.yml" docker-compose.prod.yml
+            cp -f "$STAGE_DIR/.env.server.example" .env.server.example
+            cp -f "$STAGE_DIR/nginx/nginx.conf" nginx/nginx.conf
+            cp -f "$STAGE_DIR/nginx/nginx-http.conf" nginx/nginx-http.conf
+            cp -f "$STAGE_DIR/scripts/production-deploy.sh" scripts/production-deploy.sh
+            chmod +x scripts/production-deploy.sh
+            rm -rf "$STAGE_DIR"
+
+            if [ -z "${ENV_FILE:-}" ]; then
+              if [ -f ".env.production" ]; then
+                ENV_FILE=".env.production"
+              elif [ -f ".env" ]; then
+                ENV_FILE=".env"
+              fi
+            fi
+            if [ -n "${ENV_FILE:-}" ] && [ -f "$ENV_FILE" ]; then
+              export ENV_FILE
+              set -a
+              . "$ENV_FILE"
+              set +a
+            fi
+
+            export IMAGE_REGISTRY="${{ env.REGISTRY }}"
+            export IMAGE_REPO="${{ steps.release.outputs.repo }}"
+            export IMAGE_TAG="${{ steps.release.outputs.tag }}"
+            if docker compose version >/dev/null 2>&1; then
+              COMPOSE="docker compose"
+            else
+              COMPOSE="docker-compose"
+            fi
+
+            ROLLBACK_SERVICES=""
+            for svc in api admin web astrology; do
+              if docker container inspect "wellness-${svc}" >/dev/null 2>&1; then
+                img_id=$(docker inspect --format '{{.Image}}' "wellness-${svc}" 2>/dev/null || true)
+                if [ -n "$img_id" ] && docker image inspect "$img_id" >/dev/null 2>&1; then
+                  docker tag "$img_id" "${IMAGE_REGISTRY}/${IMAGE_REPO}-${svc}:rollback"
+                  ROLLBACK_SERVICES="${ROLLBACK_SERVICES} ${svc}"
+                fi
+              fi
+            done
+            printf '%s\n' "${ROLLBACK_SERVICES# }" > "${BACKUP_DIR}/rollback-services"
+
+            rollback() {
+              set +e
+              echo "Deployment failed, rolling back config and containers..."
+              $COMPOSE -f docker-compose.prod.yml logs --tail=50 api nginx || true
+              for rel_file in docker-compose.prod.yml .env.server.example nginx/nginx.conf nginx/nginx-http.conf scripts/production-deploy.sh .deploy-current-tag; do
+                if [ -f "${BACKUP_DIR}/${rel_file}" ]; then
+                  cat "${BACKUP_DIR}/${rel_file}" > "$rel_file"
+                fi
+              done
+              for svc in api admin web astrology; do
+                case " ${ROLLBACK_SERVICES} " in
+                  *" ${svc} "*) ;;
+                  *) $COMPOSE -f docker-compose.prod.yml stop "$svc" >/dev/null 2>&1 || true ;;
+                esac
+              done
+              if [ -n "$ROLLBACK_SERVICES" ]; then
+                IMAGE_TAG="rollback" $COMPOSE -f docker-compose.prod.yml up -d --no-deps --remove-orphans $ROLLBACK_SERVICES
+              else
+                $COMPOSE -f docker-compose.prod.yml stop api admin web astrology || true
+              fi
+              $COMPOSE -f docker-compose.prod.yml up -d --force-recreate --no-deps nginx || true
+              $COMPOSE -f docker-compose.prod.yml exec -T nginx nginx -t || true
+              exit 1
+            }
+
+            $COMPOSE -f docker-compose.prod.yml pull
+            $COMPOSE -f docker-compose.prod.yml up -d postgres redis
+            for db_svc in wellness-db wellness-redis; do
+              elapsed=0
+              until [ "$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$db_svc" 2>/dev/null || echo missing)" = "healthy" ]; do
+                if [ "$elapsed" -ge 60 ]; then rollback; fi
+                sleep 2
+                elapsed=$((elapsed + 2))
+              done
+            done
+
+            trap rollback ERR
+
+            $COMPOSE -f docker-compose.prod.yml run --rm --no-deps api pnpm prisma migrate deploy
+            $COMPOSE -f docker-compose.prod.yml up -d --remove-orphans
+            $COMPOSE -f docker-compose.prod.yml up -d --force-recreate --no-deps nginx
+            $COMPOSE -f docker-compose.prod.yml exec -T nginx nginx -t
+
+            for svc in wellness-api wellness-admin wellness-web wellness-astrology wellness-nginx; do
+              elapsed=0
+              until [ "$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$svc" 2>/dev/null || echo missing)" = "healthy" ]; do
+                if [ "$elapsed" -ge 60 ]; then rollback; fi
+                sleep 2
+                elapsed=$((elapsed + 2))
+              done
+            done
+
+            $COMPOSE -f docker-compose.prod.yml exec -T api curl -fsS http://localhost:4000/healthz >/dev/null
+            $COMPOSE -f docker-compose.prod.yml exec -T admin curl -fsS http://localhost:3000 >/dev/null
+            $COMPOSE -f docker-compose.prod.yml exec -T web curl -fsS http://localhost:3000 >/dev/null
+            $COMPOSE -f docker-compose.prod.yml exec -T astrology curl -fsS http://localhost:5000/health >/dev/null
+
+            trap - ERR
+
+      - name: Health check
+        id: external_health
+        run: |
+          API_URL="${{ secrets.PRODUCTION_API_URL || 'https://api.kadinatlasi.com' }}"
+          WEB_URL="${{ secrets.PRODUCTION_URL || 'https://kadinatlasi.com' }}"
+          for attempt in 1 2 3; do
+            sleep 5
+            if curl -fsS --max-time 15 "${API_URL%/}/healthz" >/dev/null && \
+               curl -fsS --max-time 15 "${WEB_URL%/}" >/dev/null; then
+              exit 0
+            fi
+            echo "External HTTPS health check attempt ${attempt} failed, retrying..."
+          done
+          echo "External HTTPS health check failed after 3 attempts"
+          exit 1
+
+      - name: Rollback on external health check failure
+        if: failure() && steps.deploy.outcome == 'success'
         uses: appleboy/ssh-action@v1.0.0
         with:
           host: ${{ secrets.PRODUCTION_HOST }}
           username: ${{ secrets.PRODUCTION_USER }}
           key: ${{ secrets.PRODUCTION_SSH_KEY }}
           script: |
+            set +e
             cd /opt/wellness-app
-            docker-compose -f docker-compose.prod.yml pull
-            docker-compose -f docker-compose.prod.yml up -d
-            docker-compose -f docker-compose.prod.yml exec -T api pnpm prisma migrate deploy
-            docker system prune -af
+            BACKUP_DIR="/opt/wellness-app/.deploy-backup"
+            if docker compose version >/dev/null 2>&1; then
+              COMPOSE="docker compose"
+            else
+              COMPOSE="docker-compose"
+            fi
 
-      - name: Health check
-        run: |
-          sleep 30
-          curl -f ${{ secrets.PRODUCTION_URL }}/health || exit 1
+            if [ -z "${ENV_FILE:-}" ]; then
+              if [ -f ".env.production" ]; then
+                ENV_FILE=".env.production"
+              elif [ -f ".env" ]; then
+                ENV_FILE=".env"
+              fi
+            fi
+            if [ -n "${ENV_FILE:-}" ] && [ -f "$ENV_FILE" ]; then
+              export ENV_FILE
+              set -a
+              . "$ENV_FILE"
+              set +a
+            fi
+
+            export IMAGE_REGISTRY="${{ env.REGISTRY }}"
+            export IMAGE_REPO="${{ steps.release.outputs.repo }}"
+
+            echo "External HTTPS health check failed; rolling back server config and containers..."
+            $COMPOSE -f docker-compose.prod.yml logs --tail=50 api nginx || true
+
+            for rel_file in docker-compose.prod.yml .env.server.example nginx/nginx.conf nginx/nginx-http.conf scripts/production-deploy.sh .deploy-current-tag; do
+              if [ -f "${BACKUP_DIR}/${rel_file}" ]; then
+                cat "${BACKUP_DIR}/${rel_file}" > "$rel_file"
+              fi
+            done
+
+            ROLLBACK_SERVICES=""
+            if [ -f "${BACKUP_DIR}/rollback-services" ]; then
+              ROLLBACK_SERVICES=$(cat "${BACKUP_DIR}/rollback-services")
+            fi
+
+            for svc in api admin web astrology; do
+              case " ${ROLLBACK_SERVICES} " in
+                *" ${svc} "*) ;;
+                *) $COMPOSE -f docker-compose.prod.yml stop "$svc" >/dev/null 2>&1 || true ;;
+              esac
+            done
+
+            if [ -n "$ROLLBACK_SERVICES" ]; then
+              IMAGE_TAG="rollback" $COMPOSE -f docker-compose.prod.yml up -d --no-deps --remove-orphans $ROLLBACK_SERVICES
+            else
+              $COMPOSE -f docker-compose.prod.yml stop api admin web astrology || true
+            fi
+
+            $COMPOSE -f docker-compose.prod.yml up -d --force-recreate --no-deps nginx || true
+            $COMPOSE -f docker-compose.prod.yml exec -T nginx nginx -t || true
+
+      - name: Finalize deployment
+        if: success()
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.PRODUCTION_HOST }}
+          username: ${{ secrets.PRODUCTION_USER }}
+          key: ${{ secrets.PRODUCTION_SSH_KEY }}
+          script: |
+            set -euo pipefail
+            cd /opt/wellness-app
+            printf '%s\n' "${{ steps.release.outputs.tag }}" > .deploy-current-tag
+            docker image prune -af --filter "until=24h"
 
       - name: Notify deployment
         if: always()

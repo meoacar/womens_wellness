@@ -98,10 +98,15 @@ export class FunNotificationService {
             n => canShowNotification(n.id, 24) // 24 saat cooldown
         );
 
-        if (availableNotifications.length === 0) return null;
+        const pool =
+            availableNotifications.length > 0
+                ? availableNotifications
+                : MOTIVATION_NOTIFICATIONS;
 
-        const randomIndex = Math.floor(Math.random() * availableNotifications.length);
-        return availableNotifications[randomIndex];
+        if (pool.length === 0) return null;
+
+        const randomIndex = Math.floor(Math.random() * pool.length);
+        return pool[randomIndex];
     }
 
     /**
@@ -118,10 +123,15 @@ export class FunNotificationService {
             n => canShowNotification(n.id, 48) // 48 saat cooldown
         );
 
-        if (availableNotifications.length === 0) return null;
+        const pool =
+            availableNotifications.length > 0
+                ? availableNotifications
+                : RANDOM_FUN_NOTIFICATIONS;
 
-        const randomIndex = Math.floor(Math.random() * availableNotifications.length);
-        return availableNotifications[randomIndex];
+        if (pool.length === 0) return null;
+
+        const randomIndex = Math.floor(Math.random() * pool.length);
+        return pool[randomIndex];
     }
 
     /**

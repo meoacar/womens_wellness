@@ -2,6 +2,7 @@ import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { OAuth2Client, TokenPayload } from 'google-auth-library';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthService } from './auth.service';
+import type { ClientTelemetry } from '../common/utils/client-telemetry';
 
 @Injectable()
 export class GoogleAuthService {
@@ -39,7 +40,7 @@ export class GoogleAuthService {
     }
   }
 
-  async exchangeIdToken(idToken: string) {
+  async exchangeIdToken(idToken: string, telemetry?: ClientTelemetry) {
     const googlePayload = await this.verifyIdToken(idToken);
 
     // Use upsert to handle race conditions and ensure idempotency
@@ -186,6 +187,6 @@ export class GoogleAuthService {
       }
     }
 
-    return this.authService.login(user);
+    return this.authService.login(user, telemetry);
   }
 }

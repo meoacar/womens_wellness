@@ -99,7 +99,7 @@ const QUICK_GUIDES = [
         id: 'wellness',
         title: 'Su, Uyku, Adım & Nefes Egzersizi',
         steps: [
-            '1. Su Takibi ekranında kilona göre hesaplanan günlük hedefe +250ml hızlı butonlarla ulaş.',
+            '1. Su Takibi ekranında kilona göre hesaplanan günlük hedefe +200ml hızlı butonlarla ulaş.',
             '2. Rahatlama & Meditasyon ekranında kramp/uyku/stres için 4-7-8 Nefes Zamanlayıcısı başlat.',
             '3. Sağlık Raporu bölümünden doktorunla paylaşabileceğin özet raporu oluştur.',
         ],

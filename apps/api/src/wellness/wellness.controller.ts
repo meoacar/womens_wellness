@@ -154,6 +154,8 @@ export class WellnessController {
       totalHealthMetrics,
       activeStepUsers,
       activeWaterUsers,
+      profilesWithPrefs,
+      todayStepUsersCount,
     ] = await Promise.all([
       prisma.dailySteps.aggregate({ _sum: { count: true }, _count: true }),
       prisma.stepsLog.aggregate({ _sum: { steps: true } }),
@@ -172,7 +174,23 @@ export class WellnessController {
         select: { userId: true },
         distinct: ['userId'],
       }),
+      prisma.profile.findMany({
+        select: { preferencesJson: true },
+      }),
+      prisma.dailySteps.count({
+        where: {
+          date: {
+            gte: new Date(new Date().setHours(0, 0, 0, 0)),
+          },
+          count: { gt: 0 },
+        },
+      }),
     ]);
+
+    const activePushUsersCount = profilesWithPrefs.filter((p) => {
+      const prefs = p.preferencesJson as Record<string, any> | null;
+      return Boolean(prefs?.pushToken);
+    }).length;
 
     const activeUserIds = new Set([
       ...activeStepUsers.map((u) => u.userId),
@@ -187,6 +205,8 @@ export class WellnessController {
       totalDailyLogs,
       totalHealthMetrics,
       activeUsers7d: activeUserIds.size,
+      activePushUsersCount,
+      todayStepUsersCount,
       counts: {
         steps: dailyStepsStats._count,
         meditation: meditationStats._count,

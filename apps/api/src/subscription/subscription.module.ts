@@ -13,6 +13,8 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { RemindersModule } from '../reminders/reminders.module';
 import { PremiumGuard } from './guards/premium.guard';
 import { FeatureGuard } from './guards/feature.guard';
+import { AppleWebhookGuard } from './guards/apple-webhook.guard';
+import { GoogleWebhookGuard } from './guards/google-webhook.guard';
 
 @Module({
     imports: [PrismaModule, ConfigModule, RemindersModule],
@@ -27,6 +29,8 @@ import { FeatureGuard } from './guards/feature.guard';
         FinancialAnalyticsService,
         PremiumGuard,
         FeatureGuard,
+        AppleWebhookGuard,
+        GoogleWebhookGuard,
     ],
     exports: [
         SubscriptionService,

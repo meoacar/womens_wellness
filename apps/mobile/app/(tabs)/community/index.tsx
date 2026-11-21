@@ -11,6 +11,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useState, useCallback, useMemo } from 'react';
 import { useRouter } from 'expo-router';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '@/hooks/useTheme';
 import { useFeatureFlags } from '@/hooks/useFeatureFlags';
@@ -227,12 +228,18 @@ export default function CommunityIndexScreen() {
                             />
                         </TouchableOpacity>
                         <TouchableOpacity
-                            style={styles.askButton}
                             onPress={handleAskQuestion}
                             activeOpacity={0.85}
                         >
-                            <Ionicons name="add" size={18} color="#FFFFFF" />
-                            <Text style={styles.askButtonText}>Soru Sor</Text>
+                            <LinearGradient
+                                colors={['#EC4899', '#8B5CF6']}
+                                start={{ x: 0, y: 0 }}
+                                end={{ x: 1, y: 1 }}
+                                style={styles.askButton}
+                            >
+                                <Ionicons name="add" size={18} color="#FFFFFF" />
+                                <Text style={styles.askButtonText}>Soru Sor</Text>
+                            </LinearGradient>
                         </TouchableOpacity>
                     </View>
                 </View>

@@ -14,9 +14,17 @@ export default function FertilityCalculatorScreen() {
     const [result, setResult] = useState<any>(null);
 
     const handleCalculate = () => {
+        const baseLmp = new Date(
+            lastPeriodDate.getFullYear(),
+            lastPeriodDate.getMonth(),
+            lastPeriodDate.getDate(),
+            12,
+            0,
+            0,
+        );
         // Ovulation typically occurs 14 days before next period
         const ovulationDay = cycleLength - 14;
-        const ovulationDate = new Date(lastPeriodDate);
+        const ovulationDate = new Date(baseLmp);
         ovulationDate.setDate(ovulationDate.getDate() + ovulationDay);
 
         // Fertile window: 5 days before ovulation + ovulation day + 1 day after
@@ -33,13 +41,13 @@ export default function FertilityCalculatorScreen() {
         const peakEnd = new Date(ovulationDate);
 
         // Next period
-        const nextPeriod = new Date(lastPeriodDate);
+        const nextPeriod = new Date(baseLmp);
         nextPeriod.setDate(nextPeriod.getDate() + cycleLength);
 
         // Calculate fertile days for next 3 cycles
         const nextCycles = [];
         for (let i = 1; i <= 3; i++) {
-            const cycleStart = new Date(lastPeriodDate);
+            const cycleStart = new Date(baseLmp);
             cycleStart.setDate(cycleStart.getDate() + (cycleLength * i));
 
             const cycleOvulation = new Date(cycleStart);
@@ -224,7 +232,7 @@ export default function FertilityCalculatorScreen() {
                                 • En verimli günler ovulasyondan 2 gün önce ve ovulasyon günüdür
                             </Text>
                             <Text style={styles.tipText}>
-                                • Sperm 5 güne kadar yaşayabilir, bu yüzden verimli dönem 6 gündür
+                                • Sperm 5 güne kadar yaşayabilir, bu yüzden verimli dönem yaklaşık 7 gündür
                             </Text>
                             <Text style={styles.tipText}>
                                 • Ovulasyon testleri daha kesin sonuçlar verir

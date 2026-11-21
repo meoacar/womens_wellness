@@ -130,13 +130,15 @@ export default function QuestionDetailScreen() {
     const reportContentMutation = useReportContent();
 
     // Derived state - AFTER all hooks
-    const isQuestionAuthor = user?.id === question?.userId;
+    const isQuestionAuthor = Boolean(
+        (question as any)?.isOwner ?? (user?.id && question?.userId && user.id === question.userId),
+    );
     const answerCount = answers.length;
     const styles = createStyles(theme);
 
     // Check if user can answer (minimum 3 minutes between answers)
     const userLastAnswer = answers
-        .filter(a => a.userId === user?.id)
+        .filter(a => Boolean((a as any)?.isOwner ?? (user?.id && a.userId && a.userId === user.id)))
         .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
 
     const canAnswer = !userLastAnswer ||
@@ -276,7 +278,7 @@ export default function QuestionDetailScreen() {
             if (!answer) return;
 
             // Check if user is trying to vote on their own answer
-            if (user?.id === answer.userId) {
+            if (Boolean((answer as any)?.isOwner ?? (user?.id && answer.userId && user.id === answer.userId))) {
                 Alert.alert('Uyarı', 'Kendi cevabınıza oy veremezsiniz');
                 return;
             }
@@ -428,27 +430,40 @@ export default function QuestionDetailScreen() {
 
     return (
         <SafeAreaView style={styles.safeArea} edges={['top']}>
-            <Stack.Screen
-                options={{
-                    headerShown: true,
-                    headerTitle: question?.title || 'Soru',
-                    headerTitleStyle: {
-                        fontSize: 16,
-                    },
-                    headerBackVisible: true,
-                    headerBackTitle: 'Geri',
-                    headerRight: () => (
-                        <View style={{ flexDirection: 'row', gap: 12, marginRight: 16 }}>
-                            <TouchableOpacity onPress={handleReport}>
-                                <Text style={{ fontSize: 24 }}>🚩</Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity onPress={handleShare}>
-                                <Text style={{ fontSize: 24 }}>📤</Text>
-                            </TouchableOpacity>
-                        </View>
-                    ),
-                }}
-            />
+            <Stack.Screen options={{ headerShown: false }} />
+            <View style={styles.topBar}>
+                <TouchableOpacity
+                    style={styles.topBarBackBtn}
+                    onPress={() => router.back()}
+                    activeOpacity={0.75}
+                >
+                    <Ionicons name="arrow-back" size={20} color={theme.colors.text} />
+                </TouchableOpacity>
+                <View style={styles.topBarTitleWrap}>
+                    <Text style={styles.topBarTitle} numberOfLines={1}>
+                        {question?.title || 'Soru Detayı'}
+                    </Text>
+                    <Text style={styles.topBarSubtitle} numberOfLines={1}>
+                        Topluluk Tartışması
+                    </Text>
+                </View>
+                <View style={styles.topBarActions}>
+                    <TouchableOpacity
+                        style={styles.topBarIconBtn}
+                        onPress={handleShare}
+                        activeOpacity={0.75}
+                    >
+                        <Ionicons name="share-social-outline" size={19} color={theme.colors.text} />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                        style={styles.topBarIconBtn}
+                        onPress={handleReport}
+                        activeOpacity={0.75}
+                    >
+                        <Ionicons name="flag-outline" size={18} color="#EF4444" />
+                    </TouchableOpacity>
+                </View>
+            </View>
             <OfflineBanner />
             <KeyboardAvoidingView
                 style={styles.container}
@@ -485,7 +500,7 @@ export default function QuestionDetailScreen() {
                             </View>
                             {question.isPremium && (
                                 <View style={styles.premiumBadge}>
-                                    <Text style={{ fontSize: 12 }}>⭐</Text>
+                                    <Ionicons name="sparkles" size={13} color="#D97706" />
                                 </View>
                             )}
                         </View>
@@ -507,11 +522,11 @@ export default function QuestionDetailScreen() {
                         {/* Stats */}
                         <View style={styles.statsRow}>
                             <View style={styles.stat}>
-                                <Text style={{ fontSize: 16 }}>👁️</Text>
+                                <Ionicons name="eye-outline" size={16} color={theme.colors.textSecondary} />
                                 <Text style={styles.statText}>{question.viewCount} görüntülenme</Text>
                             </View>
                             <View style={styles.stat}>
-                                <Text style={{ fontSize: 16 }}>💬</Text>
+                                <Ionicons name="chatbubble-ellipses-outline" size={16} color={theme.colors.textSecondary} />
                                 <Text style={styles.statText}>{answerCount} cevap</Text>
                             </View>
                         </View>
@@ -521,28 +536,32 @@ export default function QuestionDetailScreen() {
                             <TouchableOpacity
                                 style={[styles.actionButton, question.isFavorited && styles.actionButtonActive]}
                                 onPress={handleFavorite}
+                                activeOpacity={0.8}
                             >
-                                <Text style={{ fontSize: 20 }}>
-                                    {question.isFavorited ? '❤️' : '🤍'}
-                                </Text>
+                                <Ionicons
+                                    name={question.isFavorited ? 'heart' : 'heart-outline'}
+                                    size={17}
+                                    color={question.isFavorited ? theme.colors.primary : theme.colors.textSecondary}
+                                />
                                 <Text style={[styles.actionButtonText, question.isFavorited && styles.actionButtonTextActive]}>
                                     {question.isFavorited ? 'Favorilerde' : 'Favorile'}
                                 </Text>
                                 {question.isFavorited && (
-                                    <Text style={{ fontSize: 12, marginLeft: 4 }}>🔔</Text>
+                                    <Ionicons name="notifications" size={13} color={theme.colors.primary} style={{ marginLeft: 2 }} />
                                 )}
                             </TouchableOpacity>
 
-                            <TouchableOpacity style={styles.actionButton} onPress={handleShare}>
-                                <Text style={{ fontSize: 20 }}>📤</Text>
+                            <TouchableOpacity style={styles.actionButton} onPress={handleShare} activeOpacity={0.8}>
+                                <Ionicons name="share-social-outline" size={17} color={theme.colors.textSecondary} />
                                 <Text style={styles.actionButtonText}>Paylaş</Text>
                             </TouchableOpacity>
 
                             <TouchableOpacity
                                 style={[styles.actionButton, styles.reportButton]}
                                 onPress={handleReport}
+                                activeOpacity={0.8}
                             >
-                                <Text style={{ fontSize: 20 }}>🚩</Text>
+                                <Ionicons name="flag-outline" size={16} color="#ef4444" />
                                 <Text style={[styles.actionButtonText, styles.reportButtonText]}>Bildir</Text>
                             </TouchableOpacity>
                         </View>
@@ -618,7 +637,11 @@ export default function QuestionDetailScreen() {
                                 }}
                                 disabled={!canAnswer}
                             >
-                                <Text style={{ fontSize: 20 }}>➕</Text>
+                                <Ionicons
+                                    name="add-circle-outline"
+                                    size={18}
+                                    color={canAnswer ? theme.colors.primary : theme.colors.textSecondary}
+                                />
                                 <Text style={[
                                     styles.answerButtonText,
                                     !canAnswer && styles.answerButtonTextDisabled
@@ -736,6 +759,54 @@ const createStyles = (theme: ReturnType<typeof useTheme>) =>
             flex: 1,
             backgroundColor: theme.colors.background,
         },
+        topBar: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            paddingHorizontal: 14,
+            paddingVertical: 10,
+            backgroundColor: theme.colors.backgroundCard,
+            borderBottomWidth: 1,
+            borderBottomColor: theme.colors.border,
+            gap: 10,
+        },
+        topBarBackBtn: {
+            width: 38,
+            height: 38,
+            borderRadius: 19,
+            backgroundColor: theme.colors.background,
+            borderWidth: 1,
+            borderColor: theme.colors.border,
+            justifyContent: 'center',
+            alignItems: 'center',
+        },
+        topBarTitleWrap: {
+            flex: 1,
+        },
+        topBarTitle: {
+            fontSize: 15.5,
+            fontWeight: '700',
+            color: theme.colors.text,
+        },
+        topBarSubtitle: {
+            fontSize: 11.5,
+            color: theme.colors.textSecondary,
+            marginTop: 1,
+        },
+        topBarActions: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 8,
+        },
+        topBarIconBtn: {
+            width: 36,
+            height: 36,
+            borderRadius: 18,
+            backgroundColor: theme.colors.background,
+            borderWidth: 1,
+            borderColor: theme.colors.border,
+            justifyContent: 'center',
+            alignItems: 'center',
+        },
         container: {
             flex: 1,
         },
@@ -780,8 +851,18 @@ const createStyles = (theme: ReturnType<typeof useTheme>) =>
         },
         questionCard: {
             backgroundColor: theme.colors.backgroundCard,
+            marginHorizontal: 14,
+            marginTop: 12,
+            borderRadius: 20,
+            borderWidth: 1,
+            borderColor: theme.colors.border,
             padding: theme.spacing.lg,
-            marginBottom: theme.spacing.md,
+            marginBottom: theme.spacing.sm,
+            shadowColor: '#000',
+            shadowOffset: { width: 0, height: 2 },
+            shadowOpacity: 0.04,
+            shadowRadius: 8,
+            elevation: 2,
         },
         authorSection: {
             flexDirection: 'row',

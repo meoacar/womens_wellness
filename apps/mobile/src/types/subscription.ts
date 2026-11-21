@@ -168,6 +168,7 @@ export interface PurchaseRequest {
     provider: PaymentProvider;
     productId: string;
     transactionId: string;
+    purchaseToken?: string;
 }
 
 export interface RestoreRequest {

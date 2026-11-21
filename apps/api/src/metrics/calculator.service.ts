@@ -3,7 +3,33 @@ import { Injectable } from '@nestjs/common';
 type Sex = 'male' | 'female';
 type Activity = 'sedentary' | 'moderate' | 'active';
 type Climate = 'cool' | 'temperate' | 'hot';
-type ActivityLevel = 'sedentary' | 'light' | 'moderate' | 'active' | 'very_active';
+type ActivityLevel = 'sedentary' | 'light' | 'moderate' | 'active' | 'very_active' | 'extreme';
+
+const MS_PER_DAY = 1000 * 60 * 60 * 24;
+
+function parseToUtcNoon(input: Date | string): Date {
+  if (typeof input === 'string') {
+    const isoDateMatch = input.trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (isoDateMatch) {
+      const year = Number(isoDateMatch[1]);
+      const month = Number(isoDateMatch[2]) - 1;
+      const day = Number(isoDateMatch[3]);
+      return new Date(Date.UTC(year, month, day, 12, 0, 0, 0));
+    }
+  }
+  const d = input instanceof Date ? input : new Date(input);
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 12, 0, 0, 0));
+}
+
+function addUtcDays(base: Date, days: number): Date {
+  return new Date(base.getTime() + days * MS_PER_DAY);
+}
+
+function diffUtcDays(later: Date, earlier: Date): number {
+  const laterDay = Date.UTC(later.getUTCFullYear(), later.getUTCMonth(), later.getUTCDate());
+  const earlierDay = Date.UTC(earlier.getUTCFullYear(), earlier.getUTCMonth(), earlier.getUTCDate());
+  return Math.round((laterDay - earlierDay) / MS_PER_DAY);
+}
 
 @Injectable()
 export class CalculatorService {
@@ -33,27 +59,32 @@ export class CalculatorService {
     weightKg: number,
     heightCm: number,
     ageYears: number,
-    sex: Sex,
+    sex: Sex | string,
   ): number {
-    if (sex === 'female') {
-      return 10 * weightKg + 6.25 * heightCm - 5 * ageYears - 161;
+    const normalizedSex = String(sex || 'female').trim().toLowerCase();
+    if (normalizedSex === 'male') {
+      return 10 * weightKg + 6.25 * heightCm - 5 * ageYears + 5;
     }
-    return 10 * weightKg + 6.25 * heightCm - 5 * ageYears + 5;
+    return 10 * weightKg + 6.25 * heightCm - 5 * ageYears - 161;
   }
 
   /**
    * Calculate TDEE (Total Daily Energy Expenditure)
    */
-  calculateTDEE(bmr: number, activityLevel: ActivityLevel): number {
-    const multipliers = {
+  calculateTDEE(bmr: number, activityLevel: ActivityLevel | string): number {
+    const multipliers: Record<string, number> = {
       sedentary: 1.2,
       light: 1.375,
       moderate: 1.55,
       active: 1.725,
       very_active: 1.9,
-    } as const;
+      // Legacy mobile alias
+      extreme: 1.9,
+    };
 
-    return Math.round(bmr * multipliers[activityLevel]);
+    const normalized = String(activityLevel || 'moderate').trim().toLowerCase();
+    const multiplier = multipliers[normalized] ?? multipliers.moderate;
+    return Math.round(bmr * multiplier);
   }
 
   /**
@@ -61,16 +92,29 @@ export class CalculatorService {
    */
   calculateDailyWaterNeed(
     weightKg: number,
-    activity: Activity,
-    climate: Climate,
+    activity: Activity | string,
+    climate: Climate | string,
   ): number {
     const base = weightKg * 33; // 33 ml per kg baseline (average of 30-35)
-    const activityMultiplier = {
+    const activityMultipliers: Record<string, number> = {
       sedentary: 1.0,
+      low: 1.0,
       moderate: 1.15,
       active: 1.3,
-    }[activity];
-    const climateBonus = { cool: 0, temperate: 250, hot: 500 }[climate];
+      high: 1.3,
+    };
+    const climateBonuses: Record<string, number> = {
+      cool: 0,
+      cold: 0,
+      temperate: 250,
+      moderate: 250,
+      hot: 500,
+    };
+
+    const normalizedActivity = String(activity || 'moderate').trim().toLowerCase();
+    const normalizedClimate = String(climate || 'temperate').trim().toLowerCase();
+    const activityMultiplier = activityMultipliers[normalizedActivity] ?? 1.15;
+    const climateBonus = climateBonuses[normalizedClimate] ?? 250;
 
     return Math.round(base * activityMultiplier + climateBonus); // ml/day
   }
@@ -79,18 +123,16 @@ export class CalculatorService {
    * Calculate pregnancy due date (Naegele's rule: LMP + 280 days)
    */
   calculateDueDate(lmpDate: Date): Date {
-    const dueDate = new Date(lmpDate);
-    dueDate.setDate(dueDate.getDate() + 280);
-    return dueDate;
+    return addUtcDays(parseToUtcNoon(lmpDate), 280);
   }
 
   /**
    * Calculate pregnancy week from LMP
    */
   calculatePregnancyWeek(lmpDate: Date): number {
-    const today = new Date();
-    const diffTime = Math.abs(today.getTime() - lmpDate.getTime());
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    const lmp = parseToUtcNoon(lmpDate);
+    const today = parseToUtcNoon(new Date());
+    const diffDays = Math.max(0, diffUtcDays(today, lmp));
     return Math.floor(diffDays / 7);
   }
 
@@ -105,21 +147,37 @@ export class CalculatorService {
     const cycleLength = Math.min(45, Math.max(20, Math.round(params.cycleLength || 28)));
     const periodLength = Math.min(10, Math.max(2, Math.round(params.periodLength || 5)));
 
-    const lmp = new Date(params.lastPeriodDate);
-    lmp.setHours(0, 0, 0, 0);
+    const lmp = parseToUtcNoon(params.lastPeriodDate);
+    const today = parseToUtcNoon(new Date());
+    const diffDays = diffUtcDays(today, lmp);
+    const isFutureDate = diffDays < 0;
 
-    const addDays = (base: Date, days: number) => {
-      const d = new Date(base);
-      d.setDate(d.getDate() + days);
-      return d;
-    };
+    // Project forward to the currently active cycle when past cycles have elapsed
+    const cyclesPassed = diffDays >= 0 ? Math.floor(diffDays / cycleLength) : 0;
+    const activeCycleStart = addUtcDays(lmp, cyclesPassed * cycleLength);
+    const currentCycleDay = diffDays >= 0 ? (diffDays % cycleLength) + 1 : 1;
+
+    const ovulationOffset = Math.max(7, cycleLength - 14);
+    const ovulationCycleDay = ovulationOffset + 1; // 1-indexed cycle day (LMP = Day 1)
+    let currentPhase: 'MENSTRUAL' | 'FOLLICULAR' | 'OVULATION' | 'LUTEAL' = 'FOLLICULAR';
+    if (currentCycleDay <= periodLength) {
+      currentPhase = 'MENSTRUAL';
+    } else if (currentCycleDay >= ovulationCycleDay - 1 && currentCycleDay <= ovulationCycleDay + 1) {
+      currentPhase = 'OVULATION';
+    } else if (currentCycleDay > ovulationCycleDay + 1) {
+      currentPhase = 'LUTEAL';
+    }
+
+    const currentCycleOvulation = addUtcDays(activeCycleStart, ovulationOffset);
+    const currentFertileStart = addUtcDays(currentCycleOvulation, -5);
+    const currentFertileEnd = addUtcDays(currentCycleOvulation, 1);
 
     const upcomingCycles = [0, 1, 2].map((index) => {
-      const start = addDays(lmp, (index + 1) * cycleLength);
-      const end = addDays(start, periodLength - 1);
-      const ovulation = addDays(start, -14);
-      const fertileStart = addDays(ovulation, -5);
-      const fertileEnd = addDays(ovulation, 1);
+      const start = addUtcDays(activeCycleStart, (index + 1) * cycleLength);
+      const end = addUtcDays(start, periodLength - 1);
+      const ovulation = addUtcDays(start, -14);
+      const fertileStart = addUtcDays(ovulation, -5);
+      const fertileEnd = addUtcDays(ovulation, 1);
       return {
         cycleNumber: index + 1,
         startDate: start.toISOString(),
@@ -130,29 +188,12 @@ export class CalculatorService {
       };
     });
 
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const diffDays = Math.floor((today.getTime() - lmp.getTime()) / (1000 * 60 * 60 * 24));
-    const currentCycleDay = diffDays >= 0 ? (diffDays % cycleLength) + 1 : 1;
-
-    const ovulationDay = Math.max(7, cycleLength - 14);
-    let currentPhase: 'MENSTRUAL' | 'FOLLICULAR' | 'OVULATION' | 'LUTEAL' = 'FOLLICULAR';
-    if (currentCycleDay <= periodLength) {
-      currentPhase = 'MENSTRUAL';
-    } else if (currentCycleDay >= ovulationDay - 1 && currentCycleDay <= ovulationDay + 1) {
-      currentPhase = 'OVULATION';
-    } else if (currentCycleDay > ovulationDay + 1) {
-      currentPhase = 'LUTEAL';
-    }
-
-    const currentCycleOvulation = addDays(lmp, ovulationDay - 1);
-    const currentFertileStart = addDays(currentCycleOvulation, -5);
-    const currentFertileEnd = addDays(currentCycleOvulation, 1);
-
     return {
       cycleLength,
       periodLength,
       lastPeriodDate: lmp.toISOString(),
+      daysSinceLmp: diffDays,
+      isFutureDate,
       currentCycleDay,
       currentPhase,
       nextPeriodDate: upcomingCycles[0].startDate,
@@ -169,30 +210,32 @@ export class CalculatorService {
    * Calculate gestational age & trimester from LMP or Due Date
    */
   calculatePregnancyEstimate(params: { lmpDate?: string; dueDate?: string }) {
-    const MS_PER_DAY = 1000 * 60 * 60 * 24;
     let lmp: Date;
     let due: Date;
 
     if (params.lmpDate) {
-      lmp = new Date(params.lmpDate);
-      lmp.setHours(0, 0, 0, 0);
-      due = new Date(lmp.getTime() + 280 * MS_PER_DAY);
+      lmp = parseToUtcNoon(params.lmpDate);
+      due = addUtcDays(lmp, 280);
     } else if (params.dueDate) {
-      due = new Date(params.dueDate);
-      due.setHours(0, 0, 0, 0);
-      lmp = new Date(due.getTime() - 280 * MS_PER_DAY);
+      due = parseToUtcNoon(params.dueDate);
+      lmp = addUtcDays(due, -280);
     } else {
-      lmp = new Date();
-      lmp.setHours(0, 0, 0, 0);
-      due = new Date(lmp.getTime() + 280 * MS_PER_DAY);
+      lmp = parseToUtcNoon(new Date());
+      due = addUtcDays(lmp, 280);
     }
 
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const elapsedDays = Math.max(0, Math.min(294, Math.floor((today.getTime() - lmp.getTime()) / MS_PER_DAY)));
+    const today = parseToUtcNoon(new Date());
+    const rawElapsedDays = diffUtcDays(today, lmp);
+    const elapsedDays = Math.max(0, Math.min(294, rawElapsedDays));
+    const rangeStatus: 'normal' | 'future_lmp' | 'past_due_over_42w' =
+      rawElapsedDays < 0
+        ? 'future_lmp'
+        : rawElapsedDays > 294
+          ? 'past_due_over_42w'
+          : 'normal';
     const weeks = Math.floor(elapsedDays / 7);
     const days = elapsedDays % 7;
-    const daysRemaining = Math.max(0, Math.ceil((due.getTime() - today.getTime()) / MS_PER_DAY));
+    const daysRemaining = Math.max(0, diffUtcDays(due, today));
     const trimester = weeks <= 13 ? 1 : weeks <= 26 ? 2 : 3;
     const progressPercentage = Math.min(100, Math.max(0, Math.round((elapsedDays / 280) * 100)));
 
@@ -202,6 +245,9 @@ export class CalculatorService {
       weeks,
       days,
       totalDays: elapsedDays,
+      rawElapsedDays,
+      isOutOfRange: rangeStatus !== 'normal',
+      rangeStatus,
       daysRemaining,
       trimester,
       progressPercentage,

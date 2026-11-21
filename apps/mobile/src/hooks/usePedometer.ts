@@ -1,60 +1,30 @@
-import { useState, useEffect } from 'react';
-import { Pedometer } from 'expo-sensors';
-import { Platform } from 'react-native';
+import { pedometerSyncService } from '@/services/pedometerSync';
+import { usePedometerStore } from '@/store/pedometerStore';
 
-interface UsePedometerReturn {
-    isPedometerAvailable: boolean;
-    currentStepCount: number;
-    pastStepCount: number;
-    totalSteps: number;
-}
+export function usePedometer() {
+  const isPedometerAvailable = usePedometerStore((s) => s.isAvailable);
+  const hasPermission = usePedometerStore((s) => s.hasPermission);
+  const isEnabled = usePedometerStore((s) => s.enabled);
+  const liveNotificationEnabled = usePedometerStore((s) => s.liveNotificationEnabled);
+  const totalSteps = usePedometerStore((s) => s.todaySteps);
+  const isSyncing = usePedometerStore((s) => s.isSyncing);
+  const lastSyncedAt = usePedometerStore((s) => s.lastSyncedAt);
 
-export function usePedometer(): UsePedometerReturn {
-    const [isPedometerAvailable, setIsPedometerAvailable] = useState(false);
-    const [currentStepCount, setCurrentStepCount] = useState(0);
-    const [pastStepCount, setPastStepCount] = useState(0);
-
-    useEffect(() => {
-        // Check if pedometer is available
-        const checkAvailability = async () => {
-            const available = await Pedometer.isAvailableAsync();
-            setIsPedometerAvailable(available);
-        };
-
-        checkAvailability();
-    }, []);
-
-    useEffect(() => {
-        if (!isPedometerAvailable) return;
-
-        // Subscribe to pedometer updates
-        const subscription = Pedometer.watchStepCount((result) => {
-            setCurrentStepCount(result.steps);
-        });
-
-        // Get today's step count
-        const end = new Date();
-        const start = new Date();
-        start.setHours(0, 0, 0, 0);
-
-        Pedometer.getStepCountAsync(start, end).then(
-            (result) => {
-                setPastStepCount(result.steps);
-            },
-            (error) => {
-                console.error('Could not get step count:', error);
-            }
-        );
-
-        return () => {
-            subscription && subscription.remove();
-        };
-    }, [isPedometerAvailable]);
-
-    return {
-        isPedometerAvailable,
-        currentStepCount,
-        pastStepCount,
-        totalSteps: pastStepCount + currentStepCount,
-    };
+  return {
+    isPedometerAvailable,
+    hasPermission,
+    isEnabled,
+    liveNotificationEnabled,
+    totalSteps,
+    isSyncing,
+    lastSyncedAt,
+    isAutoActive: isPedometerAvailable && isEnabled && hasPermission === true,
+    enableAndStart: () => pedometerSyncService.enableAndStart(),
+    setAutoEnabled: (enabled: boolean) => pedometerSyncService.setAutoEnabled(enabled),
+    setLiveNotificationEnabled: (enabled: boolean) =>
+      pedometerSyncService.setLiveNotificationEnabled(enabled),
+    updateStepGoal: (goal: number) => pedometerSyncService.updateStepGoal(goal),
+    syncNow: () => pedometerSyncService.syncNow(true),
+    recordManualSteps: (count: number) => pedometerSyncService.recordManualSteps(count),
+  };
 }

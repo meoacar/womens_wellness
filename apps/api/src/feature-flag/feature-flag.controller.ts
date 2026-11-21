@@ -23,9 +23,9 @@ export class FeatureFlagController {
     return this.featureFlagService.findPublicFlags();
   }
 
-  // Authenticated read endpoints
+  // Admin-only feature flag read/write endpoints
   @Get()
-  @UseGuards(AuthGuard('jwt'))
+  @UseGuards(AuthGuard('jwt'), AdminGuard)
   async findAll(@Query('page') page?: string, @Query('limit') limit?: string) {
     return this.featureFlagService.findAll({
       page: page ? parseInt(page, 10) : undefined,
@@ -34,7 +34,7 @@ export class FeatureFlagController {
   }
 
   @Get(':key')
-  @UseGuards(AuthGuard('jwt'))
+  @UseGuards(AuthGuard('jwt'), AdminGuard)
   async findOne(@Param('key') key: string) {
     return this.featureFlagService.findOne(key);
   }

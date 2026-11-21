@@ -3,6 +3,7 @@
 import React from 'react';
 import Link from 'next/link';
 import { useAppContext } from './AppContext';
+import { AppleIcon, GooglePlayIcon } from './StoreIcons';
 import type { SiteSummary } from '@/lib/api';
 
 export function Footer({ pages = [] }: { pages?: SiteSummary['pages'] }) {
@@ -22,7 +23,11 @@ export function Footer({ pages = [] }: { pages?: SiteSummary['pages'] }) {
         <div className="grid gap-10 md:grid-cols-4">
           <div className="md:col-span-2">
             <div className="flex items-center gap-2.5">
-              <img src="/images/icon.png" alt={t.brand} className="h-9 w-9 rounded-xl object-cover" />
+              <img
+                src="/images/mascots/2.png"
+                alt={t.brand}
+                className="h-9 w-9 rounded-xl bg-gradient-to-br from-[#FFF0F5] to-[#F3E8FF] p-1 shadow-sm ring-1 ring-pink-200/60 object-contain dark:from-[#2a1936] dark:to-[#1f1630] dark:ring-pink-900/40"
+              />
               <span className="bg-gradient-to-r from-[#FF69B4] to-[#7C3AED] bg-clip-text text-xl font-extrabold text-transparent">
                 {t.brand}
               </span>
@@ -34,16 +39,18 @@ export function Footer({ pages = [] }: { pages?: SiteSummary['pages'] }) {
               <button
                 type="button"
                 onClick={openDownloadModal}
-                className="rounded-xl bg-[#1A1523] px-4 py-2 text-xs font-bold text-white transition hover:opacity-90 dark:bg-white dark:text-[#1A1523]"
+                className="inline-flex items-center gap-2 rounded-xl bg-[#1A1523] px-4 py-2 text-xs font-bold text-white transition hover:opacity-90 dark:bg-white dark:text-[#1A1523]"
               >
-                App Store
+                <AppleIcon className="h-4 w-4 shrink-0" />
+                <span>App Store</span>
               </button>
               <button
                 type="button"
                 onClick={openDownloadModal}
-                className="rounded-xl border border-[var(--border-soft)] bg-[var(--bg-page)] px-4 py-2 text-xs font-bold text-[var(--text-main)] transition hover:border-[#FF69B4]"
+                className="inline-flex items-center gap-2 rounded-xl border border-[var(--border-soft)] bg-[var(--bg-page)] px-4 py-2 text-xs font-bold text-[var(--text-main)] transition hover:border-[#FF69B4]"
               >
-                Google Play
+                <GooglePlayIcon className="h-4 w-4 shrink-0" />
+                <span>Google Play</span>
               </button>
             </div>
           </div>

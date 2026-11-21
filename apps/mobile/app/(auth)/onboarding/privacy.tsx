@@ -41,9 +41,14 @@ export default function PrivacyStep() {
   }, []);
 
   const onSubmit = async (formData: ConsentInput) => {
+    const nowIso = new Date().toISOString();
     await updateData({
       acceptPrivacy: formData.acceptPrivacy,
+      privacyAcceptedAt: data.privacyAcceptedAt || nowIso,
       aiMemoryOptIn: formData.aiMemoryOptIn,
+      aiMemoryAcceptedAt: formData.aiMemoryOptIn
+        ? data.aiMemoryAcceptedAt || nowIso
+        : undefined,
     });
 
     completeStep(3);

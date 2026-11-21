@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react';
 import {
     View,
     Text,
@@ -5,19 +6,59 @@ import {
     ScrollView,
     TouchableOpacity,
     Linking,
+    ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useTheme } from '@/hooks/useTheme';
+import { pagesService } from '@/services/api';
+import { CmsMarkdownView } from '@/components/CmsMarkdownView';
+
+const OFFLINE_ABOUT_FALLBACK = `## 1. Kurumsal Kimlik ve İşletmeci Bilgileri
+**Kadın Atlası** (\`kadinatlasi.com\` ve mobil uygulamaları), kadınların döngü sağlığı, doğurganlık, gebelik takibi ve günlük wellness alışkanlıklarını bilimsel rehberlik ve yüksek veri gizliliği standartlarıyla yönetebilmesi amacıyla geliştirilmiştir.
+
+- **İşletmeci / Veri Sorumlusu:** Kadın Atlası Dijital Sağlık ve Wellness Teknolojileri Yönetimi (İstanbul, Türkiye)
+- **Destek E-postası:** destek@kadinatlasi.com
+- **KVKK Başvuru E-postası:** kvkk@kadinatlasi.com
+
+## 2. Ekibimiz ve Tıbbi Yayın & İnceleme Kurulu
+- **Dr. Ayşe Yılmaz:** Kadın Hastalıkları, Doğum ve Üreme Endokrinolojisi Editörlüğü
+- **Uzm. Dyt. Elif Kaya:** Beslenme ve Diyetetik Editörlüğü
+- **Uzm. Psk. Zeynep Demir:** Klinik Psikoloji ve Cinsel Sağlık Danışmanlığı
+- **Kadın Atlası Tıbbi Yayın & İnceleme Kurulu:** ACOG, WHO, NHS ve NIH kılavuzları doğrultusunda içerik denetimi.`;
 
 export default function AboutScreen() {
     const router = useRouter();
     const theme = useTheme();
+    const styles = createStyles(theme);
 
     const appVersion = '1.0.0';
     const buildNumber = '1';
 
-    const styles = createStyles(theme);
+    const [aboutContent, setAboutContent] = useState(OFFLINE_ABOUT_FALLBACK);
+    const [updatedAt, setUpdatedAt] = useState<string | undefined>(undefined);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        let mounted = true;
+        pagesService
+            .getBySlug('hakkimizda')
+            .then((data) => {
+                if (mounted && data?.contentTr) {
+                    setAboutContent(data.contentTr);
+                    setUpdatedAt(data.updatedAt);
+                }
+            })
+            .catch(() => {
+                // Keep offline fallback
+            })
+            .finally(() => {
+                if (mounted) setLoading(false);
+            });
+        return () => {
+            mounted = false;
+        };
+    }, []);
 
     return (
         <SafeAreaView style={styles.safeArea} edges={['top']}>
@@ -25,7 +66,7 @@ export default function AboutScreen() {
                 <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
                     <Text style={styles.backButtonText}>‹ Geri</Text>
                 </TouchableOpacity>
-                <Text style={styles.headerTitle}>Hakkında</Text>
+                <Text style={styles.headerTitle}>Hakkımızda & Künye</Text>
                 <View style={styles.headerRight} />
             </View>
 
@@ -35,64 +76,34 @@ export default function AboutScreen() {
                     <View style={styles.logoContainer}>
                         <Text style={styles.logoEmoji}>🌸</Text>
                     </View>
-                    <Text style={styles.appName}>Women's Wellness</Text>
-                    <Text style={styles.appTagline}>Companion</Text>
+                    <Text style={styles.appName}>Kadın Atlası</Text>
+                    <Text style={styles.appTagline}>Döngü, Gebelik & Wellness Asistanı</Text>
                     <Text style={styles.versionText}>Versiyon {appVersion} ({buildNumber})</Text>
                 </View>
 
-                {/* Description */}
+                {/* Live CMS Corporate Content managed from Admin Panel */}
                 <View style={styles.section}>
-                    <Text style={styles.description}>
-                        Women's Wellness Companion, kadınların sağlık ve wellness yolculuğunda yanlarında olan kapsamlı bir dijital asistanıdır.
-                    </Text>
-                    <Text style={styles.description}>
-                        Regl takibinden hamilelik moduna, meditasyondan beslenme önerilerine kadar birçok özellikle kadınların hayatını kolaylaştırıyoruz.
-                    </Text>
-                </View>
-
-                {/* Features */}
-                <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>Özellikler</Text>
+                    {loading ? (
+                        <View style={styles.loadingRow}>
+                            <ActivityIndicator size="small" color={theme.colors.primary} />
+                            <Text style={styles.loadingText}>Kurumsal bilgiler yükleniyor...</Text>
+                        </View>
+                    ) : null}
                     <View style={styles.featureList}>
-                        <FeatureItem icon="📅" text="Regl ve ovülasyon takibi" />
-                        <FeatureItem icon="🤰" text="Hamilelik modu ve takibi" />
-                        <FeatureItem icon="🧘‍♀️" text="Meditasyon ve nefes egzersizleri" />
-                        <FeatureItem icon="💬" text="AI destekli sohbet asistanı" />
-                        <FeatureItem icon="📊" text="Sağlık raporları ve analizler" />
-                        <FeatureItem icon="🎯" text="Kişiselleştirilmiş öneriler" />
-                        <FeatureItem icon="🏆" text="Gamification ve motivasyon" />
-                        <FeatureItem icon="🔒" text="Güvenli ve özel veri saklama" />
+                        <CmsMarkdownView content={aboutContent} updatedAt={updatedAt} />
                     </View>
                 </View>
 
-                {/* Links */}
+                {/* Legal & Corporate Links */}
                 <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>Bağlantılar</Text>
+                    <Text style={styles.sectionTitle}>Yasal Dokümanlar ve Bağlantılar</Text>
 
                     <TouchableOpacity
                         style={styles.linkItem}
-                        onPress={() => Linking.openURL('https://womenswellness.app')}
+                        onPress={() => Linking.openURL('https://kadinatlasi.com')}
                     >
                         <Text style={styles.linkIcon}>🌐</Text>
-                        <Text style={styles.linkText}>Web Sitesi</Text>
-                        <Text style={styles.linkArrow}>›</Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                        style={styles.linkItem}
-                        onPress={() => Linking.openURL('https://instagram.com/womenswellness')}
-                    >
-                        <Text style={styles.linkIcon}>📱</Text>
-                        <Text style={styles.linkText}>Instagram</Text>
-                        <Text style={styles.linkArrow}>›</Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                        style={styles.linkItem}
-                        onPress={() => Linking.openURL('https://twitter.com/womenswellness')}
-                    >
-                        <Text style={styles.linkIcon}>🐦</Text>
-                        <Text style={styles.linkText}>Twitter</Text>
+                        <Text style={styles.linkText}>Resmi Web Sitesi (kadinatlasi.com)</Text>
                         <Text style={styles.linkArrow}>›</Text>
                     </TouchableOpacity>
 
@@ -101,7 +112,7 @@ export default function AboutScreen() {
                         onPress={() => router.push('/settings/kvkk-consent')}
                     >
                         <Text style={styles.linkIcon}>🔐</Text>
-                        <Text style={styles.linkText}>KVKK İzinleri</Text>
+                        <Text style={styles.linkText}>KVKK Aydınlatma ve Açık Rıza İzinleri</Text>
                         <Text style={styles.linkArrow}>›</Text>
                     </TouchableOpacity>
 
@@ -110,7 +121,7 @@ export default function AboutScreen() {
                         onPress={() => router.push('/settings/privacy-policy')}
                     >
                         <Text style={styles.linkIcon}>🔒</Text>
-                        <Text style={styles.linkText}>Gizlilik Politikası</Text>
+                        <Text style={styles.linkText}>Gizlilik Politikası ve KVKK Metni</Text>
                         <Text style={styles.linkArrow}>›</Text>
                     </TouchableOpacity>
 
@@ -119,23 +130,24 @@ export default function AboutScreen() {
                         onPress={() => router.push('/settings/terms-of-service')}
                     >
                         <Text style={styles.linkIcon}>📄</Text>
-                        <Text style={styles.linkText}>Kullanım Koşulları</Text>
+                        <Text style={styles.linkText}>Kullanım Koşulları ve Tıbbi Uyarı</Text>
                         <Text style={styles.linkArrow}>›</Text>
                     </TouchableOpacity>
-                </View>
 
-                {/* Credits */}
-                <View style={styles.section}>
-                    <Text style={styles.sectionTitle}>Teşekkürler</Text>
-                    <Text style={styles.creditsText}>
-                        Bu uygulamayı geliştiren ekibe, beta test kullanıcılarımıza ve değerli geri bildirimlerini paylaşan tüm kullanıcılarımıza teşekkür ederiz.
-                    </Text>
+                    <TouchableOpacity
+                        style={styles.linkItem}
+                        onPress={() => Linking.openURL('mailto:destek@kadinatlasi.com')}
+                    >
+                        <Text style={styles.linkIcon}>✉️</Text>
+                        <Text style={styles.linkText}>İletişim: destek@kadinatlasi.com</Text>
+                        <Text style={styles.linkArrow}>›</Text>
+                    </TouchableOpacity>
                 </View>
 
                 {/* Copyright */}
                 <View style={styles.copyrightSection}>
                     <Text style={styles.copyrightText}>
-                        © 2024 Women's Wellness Companion
+                        © {new Date().getFullYear()} Kadın Atlası (kadinatlasi.com)
                     </Text>
                     <Text style={styles.copyrightText}>
                         Tüm hakları saklıdır.
@@ -143,16 +155,6 @@ export default function AboutScreen() {
                 </View>
             </ScrollView>
         </SafeAreaView>
-    );
-}
-
-function FeatureItem({ icon, text }: { icon: string; text: string }) {
-    const theme = useTheme();
-    return (
-        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
-            <Text style={{ fontSize: 20, marginRight: 12 }}>{icon}</Text>
-            <Text style={{ fontSize: 15, color: theme.colors.text }}>{text}</Text>
-        </View>
     );
 }
 
@@ -175,17 +177,17 @@ const createStyles = (theme: any) =>
             padding: theme.spacing.xs,
         },
         backButtonText: {
-            fontSize: 24,
+            fontSize: 20,
             color: theme.colors.primary,
             fontWeight: '600',
         },
         headerTitle: {
-            fontSize: 18,
+            fontSize: 17,
             fontWeight: '700',
             color: theme.colors.text,
         },
         headerRight: {
-            width: 40,
+            width: 48,
         },
         container: {
             flex: 1,
@@ -195,57 +197,61 @@ const createStyles = (theme: any) =>
         },
         logoSection: {
             alignItems: 'center',
-            paddingVertical: theme.spacing.xl,
+            paddingVertical: theme.spacing.lg,
         },
         logoContainer: {
-            width: 100,
-            height: 100,
-            borderRadius: 50,
+            width: 84,
+            height: 84,
+            borderRadius: 42,
             backgroundColor: theme.colors.primary + '20',
             justifyContent: 'center',
             alignItems: 'center',
-            marginBottom: theme.spacing.md,
-        },
-        logoEmoji: {
-            fontSize: 50,
-        },
-        appName: {
-            fontSize: 28,
-            fontWeight: '700',
-            color: theme.colors.text,
-            marginBottom: 4,
-        },
-        appTagline: {
-            fontSize: 20,
-            fontWeight: '600',
-            color: theme.colors.primary,
             marginBottom: theme.spacing.sm,
         },
+        logoEmoji: {
+            fontSize: 42,
+        },
+        appName: {
+            fontSize: 26,
+            fontWeight: '800',
+            color: theme.colors.text,
+            marginBottom: 2,
+        },
+        appTagline: {
+            fontSize: 15,
+            fontWeight: '600',
+            color: theme.colors.primary,
+            marginBottom: 4,
+        },
         versionText: {
-            fontSize: 14,
+            fontSize: 13,
             color: theme.colors.textSecondary,
         },
         section: {
-            marginTop: theme.spacing.lg,
+            marginTop: theme.spacing.md,
             paddingHorizontal: theme.spacing.lg,
         },
         sectionTitle: {
-            fontSize: 20,
+            fontSize: 18,
             fontWeight: '700',
             color: theme.colors.text,
             marginBottom: theme.spacing.md,
         },
-        description: {
-            fontSize: 15,
+        loadingRow: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'center',
+            marginBottom: theme.spacing.sm,
+            gap: 8,
+        },
+        loadingText: {
+            fontSize: 13,
             color: theme.colors.textSecondary,
-            lineHeight: 22,
-            marginBottom: theme.spacing.md,
-            textAlign: 'center',
         },
         featureList: {
             backgroundColor: theme.colors.backgroundCard,
-            borderRadius: 12,
-            padding: theme.spacing.md,
+            borderRadius: 16,
+            padding: theme.spacing.lg,
             borderWidth: 1,
             borderColor: theme.colors.border,
         },
@@ -260,24 +266,18 @@ const createStyles = (theme: any) =>
             borderColor: theme.colors.border,
         },
         linkIcon: {
-            fontSize: 24,
+            fontSize: 22,
             marginRight: theme.spacing.md,
         },
         linkText: {
             flex: 1,
-            fontSize: 16,
+            fontSize: 15,
             fontWeight: '600',
             color: theme.colors.text,
         },
         linkArrow: {
-            fontSize: 24,
+            fontSize: 22,
             color: theme.colors.textSecondary,
-        },
-        creditsText: {
-            fontSize: 14,
-            color: theme.colors.textSecondary,
-            lineHeight: 20,
-            textAlign: 'center',
         },
         copyrightSection: {
             alignItems: 'center',

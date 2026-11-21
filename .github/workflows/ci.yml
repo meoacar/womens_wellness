@@ -3,8 +3,11 @@ name: CI Pipeline
 on:
   push:
     branches: [main, develop]
+    tags:
+      - 'v*'
   pull_request:
     branches: [main, develop]
+  workflow_call:
 
 env:
   PNPM_VERSION: 10.14.0
@@ -33,11 +36,20 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Generate Prisma Client
+        run: pnpm --filter @wellness/api exec prisma generate
+
       - name: Run linting
         run: pnpm lint
 
-      - name: Type check
+      - name: Type check API
         run: pnpm --filter @wellness/api exec tsc --noEmit
+
+      - name: Type check Admin
+        run: pnpm --filter admin exec tsc --noEmit
+
+      - name: Type check Web
+        run: pnpm --filter @wellness/web exec tsc --noEmit
 
   # Test API
   test-api:
@@ -87,29 +99,31 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Generate Prisma Client
-        run: pnpm --filter @wellness/api prisma generate
+        run: pnpm --filter @wellness/api exec prisma generate
 
       - name: Run database migrations
-        run: pnpm --filter @wellness/api prisma migrate deploy
+        run: pnpm --filter @wellness/api exec prisma migrate deploy
         env:
           DATABASE_URL: postgresql://test:test@localhost:5432/test_db
 
-      - name: Run tests
-        run: pnpm --filter @wellness/api test
+      - name: Run API tests
+        run: pnpm --filter @wellness/api exec jest --no-watchman
         env:
           DATABASE_URL: postgresql://test:test@localhost:5432/test_db
           REDIS_HOST: localhost
           REDIS_PORT: 6379
-          JWT_SECRET: test-secret
+          JWT_SECRET: test-jwt-secret-must-be-32-chars-long
+          JWT_REFRESH_SECRET: test-jwt-refresh-secret-32-chars-long
+          GOOGLE_GENERATIVE_AI_API_KEY: test-ci-placeholder-key
 
-  # Build Docker Images
+  # Build Docker Images (uses monorepo root context for all services)
   build:
     name: Build Docker Images
     runs-on: ubuntu-latest
     needs: [lint, test-api]
     strategy:
       matrix:
-        service: [api, admin, astrology]
+        service: [api, admin, web, astrology]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -120,9 +134,14 @@ jobs:
       - name: Build ${{ matrix.service }} image
         uses: docker/build-push-action@v5
         with:
-          context: ${{ matrix.service == 'astrology' && './apps/astrology-service' || '.' }}
+          context: .
           file: ${{ matrix.service == 'astrology' && './apps/astrology-service/Dockerfile' || format('./apps/{0}/Dockerfile', matrix.service) }}
+          target: production
           push: false
+          build-args: |
+            NEXT_PUBLIC_API_BASE_URL=${{ vars.NEXT_PUBLIC_API_BASE_URL || 'https://api.kadinatlasi.com' }}
+            NEXT_PUBLIC_WEB_URL=${{ vars.NEXT_PUBLIC_WEB_URL || 'https://kadinatlasi.com' }}
+            NEXT_PUBLIC_SITE_URL=${{ vars.NEXT_PUBLIC_SITE_URL || 'https://kadinatlasi.com' }}
           tags: wellness-${{ matrix.service }}:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

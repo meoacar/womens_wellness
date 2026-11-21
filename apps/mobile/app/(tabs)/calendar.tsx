@@ -23,6 +23,10 @@ import { DayMarkers } from '@/components/calendar/DayMarkers';
 import { InsightCards } from '@/components/calendar/InsightCards';
 import { PatternInsightsSection } from '@/components/calendar/PatternInsightsSection';
 import { DayDetailsSheet } from '@/components/calendar/DayDetailsSheet';
+import {
+  PeriodCycleModal,
+  type PeriodCycleRecord,
+} from '@/components/calendar/PeriodCycleModal';
 
 const MONTH_NAMES = [
   'Ocak',
@@ -64,6 +68,10 @@ export default function CalendarScreen() {
   const fadeAnim = useRef(new Animated.Value(1)).current;
 
   const [showDayDetails, setShowDayDetails] = useState(false);
+  const [showPeriodModal, setShowPeriodModal] = useState(false);
+  const [periodModalMode, setPeriodModalMode] = useState<'create' | 'edit'>('create');
+  const [periodModalCycleId, setPeriodModalCycleId] = useState<string | undefined>(undefined);
+  const handledOpenTodayRef = useRef(false);
 
   useEffect(() => {
     initializePregnancyMode();
@@ -121,7 +129,20 @@ export default function CalendarScreen() {
     enabled: isAuthenticated && !isPregnancyMode,
   });
 
+  const { data: cyclesListData } = useQuery({
+    queryKey: ['cycles'],
+    queryFn: () => cyclesService.getCycles(12),
+    enabled: isAuthenticated && !isPregnancyMode,
+  });
+
   const calendarDays: any[] = (calendarData as any)?.days || [];
+  const assumedPeriodLength: number = (calendarData as any)?.assumedPeriodLength || 5;
+  const recentCycles: PeriodCycleRecord[] = useMemo(() => {
+    const list = Array.isArray(cyclesListData)
+      ? cyclesListData
+      : (calendarData as any)?.cycles || [];
+    return list as PeriodCycleRecord[];
+  }, [cyclesListData, calendarData]);
 
   const inspectedDay = useMemo(() => {
     if (calendarDays.length === 0) return null;
@@ -147,15 +168,17 @@ export default function CalendarScreen() {
   }, [calendarDays, inspectedDateKey, todayKey]);
 
   useEffect(() => {
-    if (openToday === 'true' && calendarDays.length > 0) {
-      const todayDay = calendarDays.find((day) => {
-        const d = typeof day.date === 'string' ? new Date(day.date) : day.date;
-        return toDateKey(d) === todayKey;
-      });
-      if (todayDay) {
-        setInspectedDateKey(todayKey);
-        setShowDayDetails(true);
+    if (openToday === 'true' && !handledOpenTodayRef.current && calendarDays.length > 0) {
+      handledOpenTodayRef.current = true;
+      setInspectedDateKey(todayKey);
+      setShowDayDetails(true);
+      try {
+        router.setParams({ openToday: undefined as any });
+      } catch {
+        // Ignore
       }
+    } else if (openToday !== 'true') {
+      handledOpenTodayRef.current = false;
     }
   }, [openToday, calendarDays, todayKey]);
 
@@ -189,42 +212,83 @@ export default function CalendarScreen() {
   const handleDayPress = (day: any) => {
     const dayDate = typeof day.date === 'string' ? new Date(day.date) : day.date;
     const key = toDateKey(dayDate);
-
-    if (key === inspectedDateKey) {
-      setShowDayDetails(true);
-    } else {
-      setInspectedDateKey(key);
-    }
+    setInspectedDateKey(key);
   };
 
-  const logPeriodForDate = async (date: Date) => {
+  const invalidateCycleQueries = () => {
+    queryClient.invalidateQueries({ queryKey: ['calendar'] });
+    queryClient.invalidateQueries({ queryKey: ['cycles'] });
+    queryClient.invalidateQueries({ queryKey: ['prediction'] });
+    queryClient.invalidateQueries({ queryKey: ['stats'] });
+    queryClient.invalidateQueries({ queryKey: ['patternInsights'] });
+    queryClient.invalidateQueries({ queryKey: ['homeSnapshot'] });
+  };
+
+  const openCreatePeriodModal = () => {
+    setPeriodModalMode('create');
+    setPeriodModalCycleId(undefined);
+    setShowPeriodModal(true);
+  };
+
+  const openEditPeriodModal = (cycleId?: string) => {
+    setPeriodModalMode('edit');
+    setPeriodModalCycleId(cycleId || recentCycles[0]?.id);
+    setShowPeriodModal(true);
+  };
+
+  const markPeriodEndForDate = async (cycleId: string, date: Date, isExtending = false) => {
     try {
-      await cyclesService.createCycle({
-        startDate: date.toISOString(),
+      await cyclesService.updateCycle(cycleId, {
+        endDate: toDateKey(date),
       });
-      queryClient.invalidateQueries({ queryKey: ['calendar'] });
-      queryClient.invalidateQueries({ queryKey: ['prediction'] });
-      queryClient.invalidateQueries({ queryKey: ['stats'] });
-      queryClient.invalidateQueries({ queryKey: ['homeSnapshot'] });
-      Alert.alert('Kaydedildi', `${date.getDate()} ${MONTH_NAMES[date.getMonth()]} regl başlangıcı olarak eklendi.`);
+      invalidateCycleQueries();
+      Alert.alert(
+        'Kaydedildi',
+        isExtending
+          ? `Regl bitiş tarihi ${date.getDate()} ${MONTH_NAMES[date.getMonth()]} olarak uzatıldı.`
+          : `${date.getDate()} ${MONTH_NAMES[date.getMonth()]} adet bitiş günü olarak kaydedildi.`,
+      );
     } catch (error: any) {
-      Alert.alert('Hata', error.message || 'Kaydedilemedi');
+      Alert.alert('Hata', error?.message || 'Bitiş tarihi güncellenemedi.');
     }
   };
 
-  const confirmLogPeriod = (date: Date) => {
+  const confirmMarkPeriodEnd = (cycleId: string, date: Date, isExtending = false) => {
     Alert.alert(
-      'Regl Başlangıcı',
-      `${date.getDate()} ${MONTH_NAMES[date.getMonth()]} tarihini regl başlangıcı olarak kaydetmek istiyor musunuz?`,
+      isExtending ? 'Regl Bitişini Uzat' : 'Adet Bitişini İşaretle',
+      `${date.getDate()} ${MONTH_NAMES[date.getMonth()]} tarihini adet bitiş günü olarak işaretlemek istiyor musunuz?`,
       [
         { text: 'Vazgeç', style: 'cancel' },
         {
-          text: 'Evet, Kaydet',
-          onPress: () => logPeriodForDate(date),
+          text: 'Evet, İşaretle',
+          onPress: () => markPeriodEndForDate(cycleId, date, isExtending),
         },
-      ]
+      ],
     );
   };
+
+  // Detect if inspected non-period day immediately follows a recent cycle (for extending e.g. day 6/7)
+  const extendableCycle = useMemo(() => {
+    if (!inspectedDay || inspectedDay.isPeriod || recentCycles.length === 0) return null;
+    const inspectedTime = new Date(
+      inspectedDay.date.getFullYear(),
+      inspectedDay.date.getMonth(),
+      inspectedDay.date.getDate(),
+    ).getTime();
+
+    for (const cycle of recentCycles) {
+      const startMatch = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(cycle.startDate));
+      const s = startMatch
+        ? new Date(Number(startMatch[1]), Number(startMatch[2]) - 1, Number(startMatch[3]))
+        : new Date(cycle.startDate);
+      s.setHours(0, 0, 0, 0);
+      const diffDays = Math.round((inspectedTime - s.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+      if (diffDays >= 2 && diffDays <= 12) {
+        return { cycle, dayNumber: diffDays };
+      }
+    }
+    return null;
+  }, [inspectedDay, recentCycles]);
 
   const handleReset = () => {
     Alert.alert(
@@ -238,10 +302,7 @@ export default function CalendarScreen() {
           onPress: async () => {
             try {
               await cyclesService.deleteAllCycles();
-              queryClient.invalidateQueries({ queryKey: ['calendar'] });
-              queryClient.invalidateQueries({ queryKey: ['prediction'] });
-              queryClient.invalidateQueries({ queryKey: ['stats'] });
-              queryClient.invalidateQueries({ queryKey: ['homeSnapshot'] });
+              invalidateCycleQueries();
               Alert.alert('Başarılı', 'Döngü verileri sıfırlandı');
             } catch (error: any) {
               Alert.alert('Hata', error.message || 'Sıfırlanamadı');
@@ -585,17 +646,69 @@ export default function CalendarScreen() {
                 </Text>
               </TouchableOpacity>
 
-              {!inspectedDay.isPeriod && (
+              {!inspectedDay.isPeriod ? (
                 <TouchableOpacity
                   style={styles.secondaryActionButton}
-                  onPress={() => confirmLogPeriod(inspectedDay.date)}
+                  onPress={openCreatePeriodModal}
                   activeOpacity={0.85}
                 >
                   <Ionicons name="water-outline" size={16} color="#FF4D8D" />
                   <Text style={styles.secondaryActionText}>Regl Başlat</Text>
                 </TouchableOpacity>
+              ) : inspectedDay.cycleId && !inspectedDay.isCycleEnd ? (
+                <TouchableOpacity
+                  style={styles.secondaryActionButton}
+                  onPress={() =>
+                    confirmMarkPeriodEnd(inspectedDay.cycleId, inspectedDay.date, false)
+                  }
+                  activeOpacity={0.85}
+                >
+                  <Ionicons name="checkmark-circle-outline" size={16} color="#FF4D8D" />
+                  <Text style={styles.secondaryActionText}>Adet Bitişi</Text>
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity
+                  style={styles.secondaryActionButton}
+                  onPress={() => openEditPeriodModal(inspectedDay.cycleId)}
+                  activeOpacity={0.85}
+                >
+                  <Ionicons name="calendar-outline" size={16} color="#FF4D8D" />
+                  <Text style={styles.secondaryActionText}>Regl Düzenle</Text>
+                </TouchableOpacity>
               )}
             </View>
+
+            {inspectedDay.isPeriod && inspectedDay.cycleId && !inspectedDay.isCycleEnd && (
+              <TouchableOpacity
+                style={styles.subActionLink}
+                onPress={() => openEditPeriodModal(inspectedDay.cycleId)}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="options-outline" size={14} color="#FF4D8D" />
+                <Text style={styles.subActionLinkText}>
+                  Başlangıç / bitiş tarihini düzenle veya sil
+                </Text>
+              </TouchableOpacity>
+            )}
+
+            {!inspectedDay.isPeriod && extendableCycle && (
+              <TouchableOpacity
+                style={styles.subActionLink}
+                onPress={() =>
+                  confirmMarkPeriodEnd(
+                    extendableCycle.cycle.id,
+                    inspectedDay.date,
+                    true,
+                  )
+                }
+                activeOpacity={0.8}
+              >
+                <Ionicons name="add-circle-outline" size={14} color="#FF4D8D" />
+                <Text style={styles.subActionLinkText}>
+                  Devam eden regl bitişini bu güne uzat ({extendableCycle.dayNumber}. gün)
+                </Text>
+              </TouchableOpacity>
+            )}
           </View>
         )}
 
@@ -662,6 +775,17 @@ export default function CalendarScreen() {
                 <PatternInsightsSection patterns={patternInsights as any} />
               )}
 
+              {recentCycles.length > 0 && (
+                <TouchableOpacity
+                  style={styles.editCyclesButton}
+                  onPress={() => openEditPeriodModal(inspectedDay?.cycleId || recentCycles[0]?.id)}
+                  activeOpacity={0.75}
+                >
+                  <Ionicons name="calendar-outline" size={16} color="#FF4D8D" />
+                  <Text style={styles.editCyclesButtonText}>Regl Tarihlerini Düzenle</Text>
+                </TouchableOpacity>
+              )}
+
               <TouchableOpacity
                 style={styles.resetLinkButton}
                 onPress={handleReset}
@@ -686,12 +810,40 @@ export default function CalendarScreen() {
           isFertile={inspectedDay.isFertile}
           isPredicted={inspectedDay.isPredicted}
           isOvulation={inspectedDay.isOvulation}
+          isCycleEnd={inspectedDay.isCycleEnd}
           onLogPeriodStart={() => {
             setShowDayDetails(false);
-            confirmLogPeriod(inspectedDay.date);
+            openCreatePeriodModal();
           }}
+          onMarkPeriodEnd={
+            inspectedDay.cycleId
+              ? () => {
+                  setShowDayDetails(false);
+                  confirmMarkPeriodEnd(inspectedDay.cycleId, inspectedDay.date, false);
+                }
+              : undefined
+          }
+          onEditPeriod={
+            inspectedDay.cycleId
+              ? () => {
+                  setShowDayDetails(false);
+                  openEditPeriodModal(inspectedDay.cycleId);
+                }
+              : undefined
+          }
         />
       )}
+
+      {/* Period Start / Edit Modal */}
+      <PeriodCycleModal
+        visible={showPeriodModal}
+        onClose={() => setShowPeriodModal(false)}
+        mode={periodModalMode}
+        initialStartDate={inspectedDay?.date || today}
+        cycles={recentCycles}
+        initialCycleId={periodModalCycleId}
+        assumedPeriodLength={assumedPeriodLength}
+      />
     </SafeAreaView>
   );
 }
@@ -1011,6 +1163,21 @@ const createStyles = (theme: ReturnType<typeof useTheme>) =>
       fontSize: 13.5,
       fontWeight: '700',
     },
+    subActionLink: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 6,
+      paddingVertical: 8,
+      paddingHorizontal: 10,
+      borderRadius: 12,
+      backgroundColor: 'rgba(255, 77, 141, 0.06)',
+    },
+    subActionLinkText: {
+      fontSize: 12.5,
+      fontWeight: '600',
+      color: '#FF4D8D',
+    },
     insightsSection: {
       gap: 12,
     },
@@ -1071,6 +1238,22 @@ const createStyles = (theme: ReturnType<typeof useTheme>) =>
     },
     pregnancyCtaText: {
       fontSize: 14,
+      fontWeight: '700',
+      color: '#FF4D8D',
+    },
+    editCyclesButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 6,
+      paddingVertical: 12,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: 'rgba(255, 77, 141, 0.35)',
+      backgroundColor: 'rgba(255, 77, 141, 0.08)',
+    },
+    editCyclesButtonText: {
+      fontSize: 13.5,
       fontWeight: '700',
       color: '#FF4D8D',
     },

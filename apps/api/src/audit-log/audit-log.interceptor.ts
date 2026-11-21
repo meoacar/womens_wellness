@@ -6,29 +6,137 @@ import {
 } from '@nestjs/common';
 import { Observable, tap } from 'rxjs';
 import { AuditLogService } from './audit-log.service';
+import { extractClientTelemetry } from '../common/utils/client-telemetry';
 
-const SENSITIVE_KEYS = new Set([
+const EXACT_SECRET_KEYS = new Set([
   'password',
-  'currentPassword',
-  'newPassword',
+  'currentpassword',
+  'newpassword',
+  'confirmpassword',
   'pin',
-  'oldPin',
-  'newPin',
-  'refreshToken',
-  'accessToken',
+  'oldpin',
+  'newpin',
+  'pinhash',
+  'refreshtoken',
+  'accesstoken',
+  'idtoken',
   'token',
   'secret',
+  'secretkey',
+  'clientsecret',
+  'webhooksecret',
+  'apikey',
+  'privatekey',
+  'authorization',
+  'receiptdata',
+  'purchasetoken',
+  'signedpayload',
+  'signedtransactioninfo',
+  'signedrenewalinfo',
+  'signature',
+  'credential',
+  'credentials',
 ]);
 
-function sanitizeBody(input: any): any {
+const SECRET_KEY_SUFFIXES = [
+  'password',
+  'secret',
+  'token',
+  'apikey',
+  'privatekey',
+  'signature',
+];
+
+const REDACTED_CONTENT_KEYS = new Set([
+  'notes',
+  'note',
+  'healthnotes',
+  'sexnotes',
+  'doctornotes',
+  'adminnote',
+  'moderatornote',
+  'symptoms',
+  'symptomsjson',
+  'medications',
+  'mood',
+  'contraception',
+  'flow',
+  'cramps',
+  'hadsex',
+  'vitalsjson',
+  'contentjson',
+  'preferencesjson',
+  'content',
+  'message',
+  'messages',
+  'prompt',
+  'systemprompt',
+  'reply',
+  'answer',
+  'subject',
+  'body',
+  'text',
+  'title',
+  'description',
+  'attachments',
+  'dateofbirth',
+  'birthdate',
+  'birthtime',
+  'email',
+  'useremail',
+]);
+
+const BODY_OMITTED_PREFIXES = [
+  '/auth',
+  '/chat',
+  '/cycles',
+  '/pregnancy',
+  '/metrics',
+  '/water',
+  '/steps',
+  '/wellness',
+  '/qna',
+  '/support',
+  '/me',
+  '/users/me',
+  '/partner',
+  '/reminders',
+  '/subscription/verify',
+  '/subscription/restore',
+];
+
+function normalizeKey(key: string): string {
+  return key.replace(/[_-]/g, '').toLowerCase();
+}
+
+export function isSensitiveSecretKey(key: string): boolean {
+  const norm = normalizeKey(key);
+  if (EXACT_SECRET_KEYS.has(norm)) return true;
+  return SECRET_KEY_SUFFIXES.some((suffix) => norm.endsWith(suffix));
+}
+
+export function isRedactedContentKey(key: string): boolean {
+  return REDACTED_CONTENT_KEYS.has(normalizeKey(key));
+}
+
+export function shouldOmitAuditBody(path: string): boolean {
+  const normalizedPath = (path || '').split('?')[0].toLowerCase();
+  return BODY_OMITTED_PREFIXES.some(
+    (prefix) => normalizedPath === prefix || normalizedPath.startsWith(`${prefix}/`),
+  );
+}
+
+export function sanitizeBody(input: any): any {
   if (!input || typeof input !== 'object') return input;
   if (Array.isArray(input)) {
     return input.slice(0, 10).map((item) => sanitizeBody(item));
   }
   const clean: Record<string, any> = {};
   for (const [key, val] of Object.entries(input)) {
-    if (SENSITIVE_KEYS.has(key)) {
+    if (isSensitiveSecretKey(key)) {
       clean[key] = '[MASKED]';
+    } else if (isRedactedContentKey(key)) {
+      clean[key] = '[REDACTED]';
     } else if (typeof val === 'string' && val.length > 200) {
       clean[key] = `${val.slice(0, 200)}...`;
     } else if (val && typeof val === 'object') {
@@ -40,17 +148,45 @@ function sanitizeBody(input: any): any {
   return clean;
 }
 
+export function buildAuditMetadata(
+  method: string,
+  path: string,
+  body: any,
+): Record<string, any> {
+  if (shouldOmitAuditBody(path)) {
+    const fieldCount =
+      body && typeof body === 'object' && !Array.isArray(body)
+        ? Object.keys(body).length
+        : undefined;
+    return {
+      method,
+      path,
+      bodyRedacted: true,
+      ...(fieldCount !== undefined ? { fieldCount } : {}),
+    };
+  }
+
+  return {
+    method,
+    path,
+    body: body ? sanitizeBody(body) : undefined,
+  };
+}
+
 function inferEntity(path: string): string {
   if (path.includes('feature-flags')) return 'FeatureFlag';
   if (path.includes('period-notifications')) return 'PeriodNotification';
   if (path.includes('support')) return 'SupportTicket';
   if (path.includes('subscription')) return 'Subscription';
   if (path.includes('retention')) return 'Retention';
-  if (path.includes('admin/users') || path.includes('/users') || path.includes('bulk')) return 'User';
+  if (path.includes('admin/users') || path.includes('/users') || path.includes('bulk') || path.startsWith('/me')) return 'User';
   if (path.includes('cycles')) return 'PeriodCycle';
   if (path.includes('reminders')) return 'Reminder';
   if (path.includes('qna')) return 'QnA';
   if (path.includes('discover')) return 'Article';
+  if (path.includes('/pages')) return 'Page';
+  if (path.includes('/wellness') || path.includes('/steps')) return 'Wellness';
+  if (path.includes('/metrics')) return 'Metrics';
   if (path.includes('ai-providers') || path.includes('model-policies') || path.includes('quotas')) {
     return 'AIConfig';
   }
@@ -71,6 +207,8 @@ function inferAction(method: string, path: string): string {
 
 @Injectable()
 export class AuditLogInterceptor implements NestInterceptor {
+  private readonly telemetryTouchMap = new Map<string, number>();
+
   constructor(private readonly auditLogService: AuditLogService) {}
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
@@ -79,6 +217,17 @@ export class AuditLogInterceptor implements NestInterceptor {
     }
 
     const req = context.switchToHttp().getRequest();
+    const telemetry = extractClientTelemetry(req);
+    const reqUserId = req.user?.id;
+    if (reqUserId) {
+      const now = Date.now();
+      const last = this.telemetryTouchMap.get(reqUserId) || 0;
+      if (now - last >= 60_000) {
+        this.telemetryTouchMap.set(reqUserId, now);
+        this.auditLogService.touchUserTelemetry(reqUserId, telemetry).catch(() => {});
+      }
+    }
+
     const method = (req.method || 'GET').toUpperCase();
     if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
       return next.handle();
@@ -111,9 +260,11 @@ export class AuditLogInterceptor implements NestInterceptor {
             undefined;
 
           const metadataJson = {
-            method,
-            path: rawUrl,
-            body: req.body ? sanitizeBody(req.body) : undefined,
+            ...buildAuditMetadata(method, rawUrl, req.body),
+            ...(telemetry.ipAddress ? { ipAddress: telemetry.ipAddress } : {}),
+            ...(telemetry.deviceModel ? { deviceModel: telemetry.deviceModel } : {}),
+            ...(telemetry.osVersion ? { osVersion: telemetry.osVersion } : {}),
+            ...(telemetry.appVersion ? { appVersion: telemetry.appVersion } : {}),
           };
 
           this.auditLogService
@@ -141,6 +292,8 @@ export class AuditLogInterceptor implements NestInterceptor {
                 path: rawUrl,
                 status,
                 message: String(err?.message || 'Internal Server Error').slice(0, 200),
+                ...(telemetry.ipAddress ? { ipAddress: telemetry.ipAddress } : {}),
+                ...(telemetry.deviceModel ? { deviceModel: telemetry.deviceModel } : {}),
               },
             })
             .catch(() => {});

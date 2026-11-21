@@ -1,7 +1,13 @@
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+    Injectable,
+    BadRequestException,
+    ConflictException,
+    NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { SubscriptionStatus, Subscription, PaymentProvider, SubscriptionTier, TransactionStatus, TransactionType } from '@prisma/client';
 import { ReceiptValidatorService } from './receipt-validator.service';
+import { isCompactJws } from './utils/apple-jws-verifier';
 import { SubscriptionNotificationService } from './subscription-notification.service';
 import { SubscriptionAnalyticsService } from './subscription-analytics.service';
 import {
@@ -9,7 +15,7 @@ import {
     PAYWALL_CONFIG_FLAG_KEY,
     type PremiumPaywallConfig,
 } from './paywall-config.defaults';
-import { PurchaseDto, RestoreDto } from './dto';
+import { PurchaseDto, RestoreDto, type GoogleRestoreReceiptItem, type RestoreReceiptInput } from './dto';
 
 @Injectable()
 export class SubscriptionService {
@@ -53,9 +59,10 @@ export class SubscriptionService {
             return subscription;
         }
 
-        // Check if subscription has expired
+        // Check if active or trial subscription has expired
         if (
-            subscription.status === SubscriptionStatus.ACTIVE &&
+            (subscription.status === SubscriptionStatus.ACTIVE ||
+                subscription.status === SubscriptionStatus.TRIAL) &&
             subscription.endDate &&
             new Date() > subscription.endDate
         ) {
@@ -393,194 +400,450 @@ export class SubscriptionService {
         return nextMonth;
     }
 
+    private resolveTierFromStoreProductId(
+        productId: string,
+        paywallConfig: PremiumPaywallConfig,
+    ): SubscriptionTier {
+        const yearlyIds = new Set(
+            [
+                paywallConfig.plans.YEARLY.iosProductId,
+                paywallConfig.plans.YEARLY.androidProductId,
+                'com.wellness.premium.yearly',
+                'premium_yearly',
+            ].filter(Boolean),
+        );
+        const monthlyIds = new Set(
+            [
+                paywallConfig.plans.MONTHLY.iosProductId,
+                paywallConfig.plans.MONTHLY.androidProductId,
+                'com.wellness.premium.monthly',
+                'premium_monthly',
+            ].filter(Boolean),
+        );
+
+        if (yearlyIds.has(productId)) {
+            return SubscriptionTier.YEARLY;
+        }
+        if (monthlyIds.has(productId)) {
+            return SubscriptionTier.MONTHLY;
+        }
+
+        throw new BadRequestException(`Tanımsız abonelik ürünü: ${productId}`);
+    }
+
+    private async activateFromValidatedReceipt(params: {
+        userId: string;
+        provider: PaymentProvider;
+        receipt: string;
+        validatedData: {
+            transactionId: string;
+            originalTransactionId?: string;
+            productId: string;
+            purchaseDate: Date | string;
+            expiresDate: Date | string;
+            isTrialPeriod?: boolean;
+            isActive: boolean;
+        };
+        googlePurchaseToken?: string;
+    }): Promise<Subscription> {
+        const { userId, provider, receipt, validatedData, googlePurchaseToken } = params;
+
+        if (!this.receiptValidator.isReceiptActive(validatedData as any)) {
+            throw new BadRequestException('Abonelik makbuzu aktif değil veya süresi dolmuş');
+        }
+
+        const storeProductId = validatedData.productId;
+        const storeTransactionId = validatedData.transactionId;
+        const storeOriginalTransactionId =
+            validatedData.originalTransactionId || validatedData.transactionId;
+        const storeStartDate =
+            validatedData.purchaseDate instanceof Date
+                ? validatedData.purchaseDate
+                : new Date(validatedData.purchaseDate);
+        const storeEndDate =
+            validatedData.expiresDate instanceof Date
+                ? validatedData.expiresDate
+                : new Date(validatedData.expiresDate);
+
+        if (!storeProductId || !storeTransactionId || !storeOriginalTransactionId) {
+            throw new BadRequestException('Mağaza makbuzunda gerekli kimlik bilgileri eksik');
+        }
+
+        if (
+            !Number.isFinite(storeStartDate.getTime()) ||
+            !Number.isFinite(storeEndDate.getTime()) ||
+            storeEndDate <= new Date()
+        ) {
+            throw new BadRequestException('Mağaza abonelik tarihleri geçersiz veya süresi dolmuş');
+        }
+
+        const paywallConfig = await this.getPaywallConfig();
+        const tier = this.resolveTierFromStoreProductId(storeProductId, paywallConfig);
+        const plan = paywallConfig.plans[tier];
+        const targetStatus = validatedData.isTrialPeriod
+            ? SubscriptionStatus.TRIAL
+            : SubscriptionStatus.ACTIVE;
+        const trialEndDate = validatedData.isTrialPeriod ? storeEndDate : null;
+        const aiMessagesLimit = Number(paywallConfig.premiumAiMessageLimit || 1000);
+        const storedReceipt =
+            provider === PaymentProvider.GOOGLE ? googlePurchaseToken || receipt : receipt;
+
+        const { subscription, isReplay } = await this.prisma.$transaction(async (tx) => {
+            // 1. Verify originalTransactionId is not bound to another account
+            const ownerSub = await tx.subscription.findUnique({
+                where: { originalTransactionId: storeOriginalTransactionId },
+            });
+            if (ownerSub && ownerSub.userId !== userId) {
+                throw new ConflictException('Bu abonelik başka bir kullanıcı hesabına ait');
+            }
+
+            // 2. For Google Play, also ensure purchaseToken cannot be replayed by another user
+            if (provider === PaymentProvider.GOOGLE && googlePurchaseToken) {
+                const existingTokenTx = await tx.subscriptionTransaction.findFirst({
+                    where: {
+                        provider: PaymentProvider.GOOGLE,
+                        receiptData: googlePurchaseToken,
+                    },
+                    include: { subscription: { select: { userId: true } } },
+                });
+                if (existingTokenTx && existingTokenTx.subscription.userId !== userId) {
+                    throw new ConflictException('Bu satın alma jetonu başka bir kullanıcıya ait');
+                }
+            }
+
+            // 3. Replay / ownership check on store transactionId BEFORE modifying entitlement
+            const existingTx = await tx.subscriptionTransaction.findUnique({
+                where: { transactionId: storeTransactionId },
+                include: { subscription: true },
+            });
+
+            if (existingTx) {
+                if (existingTx.subscription.userId !== userId) {
+                    throw new ConflictException('Bu satın alma işlemi başka bir hesaba ait');
+                }
+                if (existingTx.status === TransactionStatus.COMPLETED) {
+                    return { subscription: existingTx.subscription, isReplay: true };
+                }
+            }
+
+            // 4. Atomically upsert subscription and record transaction in the same DB tx
+            const existingUserSub = await tx.subscription.findUnique({
+                where: { userId },
+            });
+
+            const savedSubscription = existingUserSub
+                ? await tx.subscription.update({
+                      where: { userId },
+                      data: {
+                          status: targetStatus,
+                          tier,
+                          startDate: storeStartDate,
+                          endDate: storeEndDate,
+                          trialEndDate,
+                          ...(validatedData.isTrialPeriod ? { hasHadTrial: true } : {}),
+                          provider,
+                          originalTransactionId: storeOriginalTransactionId,
+                          latestReceiptData: storedReceipt,
+                          aiMessagesLimit,
+                          isInGracePeriod: false,
+                          gracePeriodEndDate: null,
+                      },
+                  })
+                : await tx.subscription.create({
+                      data: {
+                          userId,
+                          status: targetStatus,
+                          tier,
+                          startDate: storeStartDate,
+                          endDate: storeEndDate,
+                          trialEndDate,
+                          hasHadTrial: Boolean(validatedData.isTrialPeriod),
+                          provider,
+                          originalTransactionId: storeOriginalTransactionId,
+                          latestReceiptData: storedReceipt,
+                          aiMessagesLimit,
+                          aiMessagesUsed: 0,
+                          quotaResetDate: this.getNextMonthStart(),
+                      },
+                  });
+
+            await tx.subscriptionTransaction.create({
+                data: {
+                    subscriptionId: savedSubscription.id,
+                    transactionId: storeTransactionId,
+                    originalTransactionId: storeOriginalTransactionId,
+                    productId: storeProductId,
+                    amount: Number(plan?.price || (tier === SubscriptionTier.YEARLY ? 999 : 99)),
+                    currency: plan?.currency || process.env.SUBSCRIPTION_CURRENCY || 'TRY',
+                    status: TransactionStatus.COMPLETED,
+                    type: TransactionType.INITIAL_PURCHASE,
+                    provider,
+                    receiptData: storedReceipt,
+                    validatedAt: new Date(),
+                },
+            });
+
+            return { subscription: savedSubscription, isReplay: false };
+        });
+
+        if (!isReplay) {
+            await this.notificationService.sendSubscriptionStarted(
+                userId,
+                tier,
+                storeEndDate,
+            );
+
+            await this.analyticsService.trackConversion(
+                userId,
+                tier,
+                Number(plan?.price || (tier === SubscriptionTier.YEARLY ? 999 : 99)),
+                'mobile_app',
+            );
+
+            await this.analyticsService.logSubscriptionEvent(
+                userId,
+                'subscription_started',
+                {
+                    tier,
+                    provider,
+                    startDate: storeStartDate.toISOString(),
+                    endDate: storeEndDate.toISOString(),
+                },
+            );
+        }
+
+        return subscription;
+    }
+
+    private resolveGooglePurchaseToken(purchaseDto: PurchaseDto): string {
+        const explicitToken = purchaseDto.purchaseToken?.trim();
+        if (explicitToken) {
+            return explicitToken;
+        }
+
+        const rawReceipt = purchaseDto.receipt?.trim();
+        if (rawReceipt) {
+            if (rawReceipt.startsWith('{')) {
+                try {
+                    const parsed = JSON.parse(rawReceipt);
+                    if (
+                        typeof parsed?.purchaseToken === 'string' &&
+                        parsed.purchaseToken.trim()
+                    ) {
+                        return parsed.purchaseToken.trim();
+                    }
+                } catch {
+                    // Treat as raw token string below
+                }
+            }
+            return rawReceipt;
+        }
+
+        const fallbackTransactionId = purchaseDto.transactionId?.trim();
+        if (fallbackTransactionId && !fallbackTransactionId.startsWith('GPA.')) {
+            return fallbackTransactionId;
+        }
+
+        throw new BadRequestException('Google Play satın alma jetonu (purchaseToken) gerekli');
+    }
+
     /**
      * Process new purchase
-     * Validates receipt and creates/updates subscription
+     * Validates receipt with store and grants store-verified entitlements atomically
      * Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8
      */
     async processPurchase(userId: string, purchaseDto: PurchaseDto): Promise<Subscription> {
-        const { receipt, provider, productId, transactionId } = purchaseDto;
+        const { receipt, provider, productId, purchaseToken } = purchaseDto;
+        const googlePurchaseToken =
+            provider === PaymentProvider.GOOGLE
+                ? this.resolveGooglePurchaseToken(purchaseDto)
+                : undefined;
+        const appleReceiptOrJws =
+            provider === PaymentProvider.APPLE && purchaseToken?.trim() && isCompactJws(purchaseToken.trim())
+                ? purchaseToken.trim()
+                : receipt;
 
         // Validate receipt with provider
         let validatedData: any;
         try {
             if (provider === PaymentProvider.APPLE) {
-                validatedData = await this.receiptValidator.validateAppleReceipt(receipt);
+                validatedData = await this.receiptValidator.validateAppleReceipt(appleReceiptOrJws);
             } else if (provider === PaymentProvider.GOOGLE) {
-                // For Google, productId is the subscription ID and transactionId is the purchase token
-                const packageName = process.env.GOOGLE_PLAY_PACKAGE_NAME || 'com.wellness.companion';
+                const packageName =
+                    process.env.GOOGLE_PLAY_PACKAGE_NAME || 'com.kadinatlasi.wellness';
                 validatedData = await this.receiptValidator.validateGoogleReceipt(
                     packageName,
                     productId,
-                    transactionId,
+                    googlePurchaseToken!,
                 );
             } else {
                 throw new BadRequestException('Geçersiz ödeme sağlayıcısı');
             }
         } catch (error) {
-            throw new BadRequestException('Makbuz doğrulaması başarısız: ' + error.message);
+            if (error instanceof BadRequestException) {
+                throw error;
+            }
+            throw new BadRequestException(
+                'Makbuz doğrulaması başarısız: ' +
+                    (error instanceof Error ? error.message : 'Bilinmeyen hata'),
+            );
         }
 
-        // Determine tier from product ID
-        const tier = productId.includes('yearly') ? SubscriptionTier.YEARLY : SubscriptionTier.MONTHLY;
-
-        // Calculate dates
-        const startDate = new Date();
-        const endDate = new Date();
-        if (tier === SubscriptionTier.MONTHLY) {
-            endDate.setMonth(endDate.getMonth() + 1);
-        } else {
-            endDate.setFullYear(endDate.getFullYear() + 1);
+        if (productId && validatedData.productId && validatedData.productId !== productId) {
+            throw new BadRequestException('Ürün kimliği mağaza makbuzu ile eşleşmiyor');
         }
 
-        // Check if user has existing subscription
-        const existingSubscription = await this.prisma.subscription.findUnique({
-            where: { userId },
+        return this.activateFromValidatedReceipt({
+            userId,
+            provider,
+            receipt: provider === PaymentProvider.APPLE ? appleReceiptOrJws : receipt,
+            validatedData,
+            googlePurchaseToken,
         });
+    }
 
-        let subscription: Subscription;
+    private parseGoogleRestoreInput(
+        item: RestoreReceiptInput,
+    ): { productId: string; purchaseToken: string; packageName?: string; rawReceipt: string } | null {
+        if (!item) return null;
 
-        if (existingSubscription) {
-            // Update existing subscription
-            subscription = await this.prisma.subscription.update({
-                where: { userId },
-                data: {
-                    status: SubscriptionStatus.ACTIVE,
-                    tier,
-                    startDate,
-                    endDate,
-                    provider,
-                    originalTransactionId: transactionId,
-                    latestReceiptData: receipt,
-                    aiMessagesLimit: 1000, // Premium limit
-                    isInGracePeriod: false,
-                    gracePeriodEndDate: null,
-                },
-            });
+        let parsed: GoogleRestoreReceiptItem;
+        let rawReceipt: string;
+
+        if (typeof item === 'string') {
+            rawReceipt = item;
+            try {
+                const json = JSON.parse(item);
+                if (!json || typeof json !== 'object') return null;
+                parsed = json;
+            } catch {
+                return null;
+            }
+        } else if (typeof item === 'object') {
+            parsed = item;
+            rawReceipt = item.receipt || JSON.stringify(item);
         } else {
-            // Create new subscription
-            subscription = await this.prisma.subscription.create({
-                data: {
-                    userId,
-                    status: SubscriptionStatus.ACTIVE,
-                    tier,
-                    startDate,
-                    endDate,
-                    provider,
-                    originalTransactionId: transactionId,
-                    latestReceiptData: receipt,
-                    aiMessagesLimit: 1000, // Premium limit
-                    aiMessagesUsed: 0,
-                    quotaResetDate: this.getNextMonthStart(),
-                },
-            });
+            return null;
         }
 
-        // Create transaction record
-        const yearlyPrice = Number(process.env.SUBSCRIPTION_YEARLY_PRICE || 999);
-        const monthlyPrice = Number(process.env.SUBSCRIPTION_MONTHLY_PRICE || 99);
-        const transactionAmount = tier === SubscriptionTier.YEARLY ? yearlyPrice : monthlyPrice;
+        const productId = (parsed.productId || '').trim();
+        const purchaseToken = (parsed.purchaseToken || parsed.transactionId || '').trim();
+        if (!productId || !purchaseToken) {
+            return null;
+        }
 
-        await this.prisma.subscriptionTransaction.create({
-            data: {
-                subscriptionId: subscription.id,
-                transactionId,
-                originalTransactionId: transactionId,
-                productId,
-                amount: transactionAmount,
-                currency: process.env.SUBSCRIPTION_CURRENCY || 'TRY',
-                status: TransactionStatus.COMPLETED,
-                type: TransactionType.INITIAL_PURCHASE,
-                provider,
-                receiptData: receipt,
-                validatedAt: new Date(),
-            },
-        });
-
-        // Send subscription started notification
-        await this.notificationService.sendSubscriptionStarted(
-            userId,
-            tier,
-            endDate,
-        );
-
-        // Track conversion event
-        await this.analyticsService.trackConversion(
-            userId,
-            tier,
-            tier === SubscriptionTier.YEARLY ? 999 : 99,
-            'mobile_app',
-        );
-
-        // Log subscription event
-        await this.analyticsService.logSubscriptionEvent(
-            userId,
-            'subscription_started',
-            {
-                tier,
-                provider,
-                startDate: startDate.toISOString(),
-                endDate: endDate.toISOString(),
-            },
-        );
-
-        return subscription;
+        return {
+            productId,
+            purchaseToken,
+            packageName: parsed.packageName?.trim(),
+            rawReceipt,
+        };
     }
 
     /**
      * Restore purchases
-     * Validates receipts and restores subscription
+     * Validates receipts for both Apple and Google Play, requires active store entitlement,
+     * and restores the active subscription with the furthest expiration date atomically.
      * Requirements: 2.5, 2.6, 14.1, 14.2, 14.3, 14.4, 14.5
      */
     async restorePurchases(userId: string, restoreDto: RestoreDto): Promise<Subscription> {
-        const { receipts, provider } = restoreDto;
+        const { receipts, purchases, provider } = restoreDto;
+        const inputs: RestoreReceiptInput[] = [
+            ...(Array.isArray(receipts) ? receipts : []),
+            ...(Array.isArray(purchases) ? purchases : []),
+        ];
 
-        if (!receipts || receipts.length === 0) {
+        if (inputs.length === 0) {
             throw new BadRequestException('En az bir makbuz gerekli');
         }
 
-        // Validate all receipts and find the most recent active one
-        let mostRecentReceipt: any = null;
+        const configuredGooglePackage =
+            process.env.GOOGLE_PLAY_PACKAGE_NAME || 'com.kadinatlasi.wellness';
+
+        // Validate all receipts and select only active ones with the furthest store expiration date
+        let mostRecentReceipt: {
+            receipt: string;
+            validatedData: any;
+            googlePurchaseToken?: string;
+        } | null = null;
         let mostRecentDate: Date | null = null;
 
-        for (const receipt of receipts) {
+        for (const item of inputs) {
             try {
-                let validatedData: any;
                 if (provider === PaymentProvider.APPLE) {
-                    validatedData = await this.receiptValidator.validateAppleReceipt(receipt);
-                } else {
-                    // For Google, we need to parse the receipt to get productId and token
-                    // This is a simplified version - in production, you'd parse the receipt properly
-                    continue;
-                }
+                    const appleReceipt =
+                        typeof item === 'string'
+                            ? item
+                            : typeof item === 'object'
+                              ? item?.purchaseToken && isCompactJws(item.purchaseToken.trim())
+                                  ? item.purchaseToken.trim()
+                                  : item?.receipt || item?.purchaseToken || ''
+                              : '';
+                    if (!appleReceipt) continue;
 
-                // Check if this receipt is more recent
-                const receiptDate = new Date(validatedData.expiresDate || validatedData.purchaseDate);
-                if (!mostRecentDate || receiptDate > mostRecentDate) {
-                    mostRecentDate = receiptDate;
-                    mostRecentReceipt = { receipt, validatedData };
+                    const validatedData =
+                        await this.receiptValidator.validateAppleReceipt(appleReceipt);
+                    if (!this.receiptValidator.isReceiptActive(validatedData)) {
+                        continue;
+                    }
+
+                    const receiptDate = new Date(validatedData.expiresDate);
+                    if (!mostRecentDate || receiptDate > mostRecentDate) {
+                        mostRecentDate = receiptDate;
+                        mostRecentReceipt = { receipt: appleReceipt, validatedData };
+                    }
+                } else if (provider === PaymentProvider.GOOGLE) {
+                    const parsedGoogle = this.parseGoogleRestoreInput(item);
+                    if (!parsedGoogle) continue;
+
+                    if (
+                        parsedGoogle.packageName &&
+                        parsedGoogle.packageName !== configuredGooglePackage
+                    ) {
+                        continue;
+                    }
+
+                    const validatedData = await this.receiptValidator.validateGoogleReceipt(
+                        configuredGooglePackage,
+                        parsedGoogle.productId,
+                        parsedGoogle.purchaseToken,
+                    );
+                    if (!this.receiptValidator.isReceiptActive(validatedData)) {
+                        continue;
+                    }
+
+                    const receiptDate = new Date(validatedData.expiresDate);
+                    if (!mostRecentDate || receiptDate > mostRecentDate) {
+                        mostRecentDate = receiptDate;
+                        mostRecentReceipt = {
+                            receipt: parsedGoogle.purchaseToken,
+                            validatedData,
+                            googlePurchaseToken: parsedGoogle.purchaseToken,
+                        };
+                    }
+                } else {
+                    throw new BadRequestException('Geçersiz ödeme sağlayıcısı');
                 }
             } catch (error) {
-                // Skip invalid receipts
-                console.log(`Skipping invalid receipt: ${error.message}`);
+                if (error instanceof BadRequestException && error.message === 'Geçersiz ödeme sağlayıcısı') {
+                    throw error;
+                }
+                console.log(
+                    `Skipping invalid receipt: ${error instanceof Error ? error.message : error}`,
+                );
             }
         }
 
         if (!mostRecentReceipt) {
-            throw new BadRequestException('Geçerli bir abonelik bulunamadı');
+            throw new BadRequestException('Geçerli ve aktif bir abonelik bulunamadı');
         }
 
-        // Restore subscription using the most recent receipt
-        const { receipt, validatedData } = mostRecentReceipt;
-        const productId = validatedData.productId;
-        const transactionId = validatedData.transactionId;
-
-        // Use processPurchase to restore
-        return this.processPurchase(userId, {
-            receipt,
+        return this.activateFromValidatedReceipt({
+            userId,
             provider,
-            productId,
-            transactionId,
+            receipt: mostRecentReceipt.receipt,
+            validatedData: mostRecentReceipt.validatedData,
+            googlePurchaseToken: mostRecentReceipt.googlePurchaseToken,
         });
     }
 

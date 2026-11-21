@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -69,12 +69,25 @@ export class ModelPolicyService {
     maxTokens: number;
     toolsEnabledJson?: string[] | string;
   }) {
-    return this.prisma.modelPolicy.create({
-      data: {
-        ...data,
-        toolsEnabledJson: this.parseToolsJson(data.toolsEnabledJson),
-      },
-    });
+    try {
+      return await this.prisma.modelPolicy.create({
+        data: {
+          plan: data.plan,
+          provider: data.provider,
+          modelName: data.modelName.trim(),
+          temperature: Number(data.temperature ?? 0.7),
+          maxTokens: Number(data.maxTokens ?? 1024),
+          toolsEnabledJson: this.parseToolsJson(data.toolsEnabledJson),
+        },
+      });
+    } catch (err: any) {
+      if (err?.code === 'P2002') {
+        throw new ConflictException(
+          `"${data.plan}" planı ve "${data.provider}" sağlayıcısı için zaten bir politika mevcut. Mevcut kaydı düzenleyebilirsiniz.`,
+        );
+      }
+      throw err;
+    }
   }
 
   async update(
@@ -90,16 +103,29 @@ export class ModelPolicyService {
   ) {
     const policy = await this.findOne(id);
 
-    return this.prisma.modelPolicy.update({
-      where: { id: policy.id },
-      data: {
-        ...data,
-        ...(data.toolsEnabledJson !== undefined
-          ? { toolsEnabledJson: this.parseToolsJson(data.toolsEnabledJson) }
-          : {}),
-        updatedAt: new Date(),
-      },
-    });
+    try {
+      return await this.prisma.modelPolicy.update({
+        where: { id: policy.id },
+        data: {
+          ...(data.plan !== undefined ? { plan: data.plan } : {}),
+          ...(data.provider !== undefined ? { provider: data.provider } : {}),
+          ...(data.modelName !== undefined ? { modelName: data.modelName.trim() } : {}),
+          ...(data.temperature !== undefined ? { temperature: Number(data.temperature) } : {}),
+          ...(data.maxTokens !== undefined ? { maxTokens: Number(data.maxTokens) } : {}),
+          ...(data.toolsEnabledJson !== undefined
+            ? { toolsEnabledJson: this.parseToolsJson(data.toolsEnabledJson) }
+            : {}),
+          updatedAt: new Date(),
+        },
+      });
+    } catch (err: any) {
+      if (err?.code === 'P2002') {
+        throw new ConflictException(
+          'Bu plan ve sağlayıcı kombinasyonu için zaten bir politika mevcut.',
+        );
+      }
+      throw err;
+    }
   }
 
   async delete(id: string) {

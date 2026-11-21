@@ -1,7 +1,6 @@
 import type { MetadataRoute } from 'next';
 import { publicApi } from '@/lib/api';
-
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000';
+import { SITE_URL } from '@/lib/i18n';
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const staticRoutes: MetadataRoute.Sitemap = [
@@ -13,12 +12,25 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   ];
 
   try {
-    const [articlesRes, pages] = await Promise.all([
-      publicApi.getArticles({ locale: 'tr', limit: 50, page: 1 }),
+    const [firstPage, pages] = await Promise.all([
+      publicApi.getArticles({ locale: 'tr', limit: 100, page: 1 }),
       publicApi.getPages(),
     ]);
 
-    const articleRoutes: MetadataRoute.Sitemap = (articlesRes.articles || []).map((a) => ({
+    const allArticles = [...(firstPage.articles || [])];
+    const totalPages = Math.min(Math.ceil((firstPage.total || allArticles.length) / 100), 10);
+    if (totalPages > 1) {
+      const rest = await Promise.all(
+        Array.from({ length: totalPages - 1 }, (_, idx) =>
+          publicApi.getArticles({ locale: 'tr', limit: 100, page: idx + 2 }),
+        ),
+      );
+      for (const r of rest) {
+        if (r.articles?.length) allArticles.push(...r.articles);
+      }
+    }
+
+    const articleRoutes: MetadataRoute.Sitemap = allArticles.map((a) => ({
       url: `${SITE_URL}/kesfet/${a.id}`,
       lastModified: a.publishedAt ? new Date(a.publishedAt) : new Date(),
       changeFrequency: 'weekly',

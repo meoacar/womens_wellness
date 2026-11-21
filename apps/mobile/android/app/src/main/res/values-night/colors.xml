@@ -1,0 +1,10 @@
+<resources>
+  <color name="notif_text_primary">#FAFAFA</color>
+  <color name="notif_text_secondary">#A1A1AA</color>
+  <color name="notif_progress_bg">#3F3F46</color>
+  <color name="notif_progress_fill">#F97316</color>
+  <color name="notif_action_bg">#3F3F46</color>
+  <color name="notif_action_tint">#FAFAFA</color>
+  <color name="notif_cycle_bg">#4A1D38</color>
+  <color name="notif_cycle_text">#F9A8D4</color>
+</resources>

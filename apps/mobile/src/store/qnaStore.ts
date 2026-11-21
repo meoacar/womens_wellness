@@ -55,6 +55,9 @@ interface QnaStore {
     getCachedQuestion: (id: string) => Question | undefined;
     clearCache: () => void;
 
+    // Clear all user-scoped persisted Q&A drafts/caches on logout
+    clearAll: () => Promise<void>;
+
     // Active filters count (for UI badge)
     getActiveFiltersCount: () => number;
 }
@@ -117,6 +120,20 @@ export const useQnaStore = create<QnaStore>()(
                 })),
             getCachedQuestion: (id) => get().cachedQuestions[id],
             clearCache: () => set({ cachedQuestions: {} }),
+
+            clearAll: async () => {
+                set({
+                    filters: defaultFilters,
+                    searchQuery: '',
+                    selectedCategory: undefined,
+                    sortBy: 'recent',
+                    draftQuestion: undefined,
+                    showAnonymousMode: false,
+                    recentlyViewed: [],
+                    cachedQuestions: {},
+                });
+                await AsyncStorage.removeItem('qna-store').catch(() => undefined);
+            },
 
             // Active filters count
             getActiveFiltersCount: () => {

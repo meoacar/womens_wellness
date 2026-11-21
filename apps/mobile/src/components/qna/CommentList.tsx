@@ -59,7 +59,9 @@ const CommentItem = memo(function CommentItem({ comment, onReport }: CommentItem
     const styles = createStyles(theme);
     const { user } = useAuthStore();
 
-    const isOwnComment = user?.id === comment.userId;
+    const isOwnComment = Boolean(
+        (comment as any)?.isOwner ?? (user?.id && comment.userId && user.id === comment.userId),
+    );
 
     return (
         <View style={styles.commentContainer}>

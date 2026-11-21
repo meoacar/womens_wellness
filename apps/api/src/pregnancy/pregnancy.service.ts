@@ -129,8 +129,13 @@ export class PregnancyService {
       return null;
     }
 
-    const weeks = pregnancy.weekCache || 0;
-    const days = this.calculateDaysInWeek(pregnancy.lmpDate!);
+    const referenceLmp =
+      pregnancy.lmpDate ||
+      (pregnancy.dueDate
+        ? new Date(new Date(pregnancy.dueDate).getTime() - 280 * 24 * 60 * 60 * 1000)
+        : null);
+    const weeks = referenceLmp ? this.calculateWeeksFromLMP(referenceLmp) : pregnancy.weekCache || 0;
+    const days = referenceLmp ? this.calculateDaysInWeek(referenceLmp) : 0;
 
     return {
       id: pregnancy.id,
@@ -693,18 +698,21 @@ export class PregnancyService {
     return pregnancy;
   }
 
-  private calculateWeeksFromLMP(lmpDate: Date): number {
+  private getElapsedDaysFromLMP(lmpDate: Date): number {
+    const MS_PER_DAY = 1000 * 60 * 60 * 24;
     const now = new Date();
-    const diffTime = Math.abs(now.getTime() - lmpDate.getTime());
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-    return Math.floor(diffDays / 7);
+    const todayUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+    const lmp = new Date(lmpDate);
+    const lmpUtc = Date.UTC(lmp.getUTCFullYear(), lmp.getUTCMonth(), lmp.getUTCDate());
+    return Math.max(0, Math.round((todayUtc - lmpUtc) / MS_PER_DAY));
+  }
+
+  private calculateWeeksFromLMP(lmpDate: Date): number {
+    return Math.floor(this.getElapsedDaysFromLMP(lmpDate) / 7);
   }
 
   private calculateDaysInWeek(lmpDate: Date): number {
-    const now = new Date();
-    const diffTime = Math.abs(now.getTime() - lmpDate.getTime());
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-    return diffDays % 7;
+    return this.getElapsedDaysFromLMP(lmpDate) % 7;
   }
 
   private calculateTrimester(weeks: number): number {

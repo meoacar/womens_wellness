@@ -4,195 +4,159 @@ import {
     ExecutionContext,
     UnauthorizedException,
     Logger,
+    Optional,
+    Inject,
 } from '@nestjs/common';
+
+export const GOOGLE_OAUTH_CLIENT = 'GOOGLE_OAUTH_CLIENT';
 import * as crypto from 'crypto';
-import * as https from 'https';
+import { OAuth2Client } from 'google-auth-library';
+import { MonitoringService } from '../../common/monitoring/monitoring.service';
 
 /**
- * Guard to verify Google Play Real-time Developer Notification signatures
- * 
- * Google sends notifications via Cloud Pub/Sub with a signature in the header.
- * This guard verifies the signature to ensure the request is authentic.
- * 
- * Documentation: https://cloud.google.com/pubsub/docs/push#authentication_and_authorization
+ * Guard to verify Google Play Real-time Developer Notifications delivered via Cloud Pub/Sub push.
+ *
+ * Verifies the Bearer OIDC JWT using `google-auth-library` (`OAuth2Client.verifyIdToken`),
+ * validating issuer, audience, `email_verified`, and optional service account email per:
+ * https://docs.cloud.google.com/pubsub/docs/authenticate-push-subscriptions
  */
 @Injectable()
 export class GoogleWebhookGuard implements CanActivate {
     private readonly logger = new Logger(GoogleWebhookGuard.name);
-    private publicKeysCache: { [kid: string]: string } = {};
-    private publicKeysCacheExpiry: number = 0;
+    private readonly oauthClient: OAuth2Client;
+
+    constructor(
+        @Optional() @Inject(GOOGLE_OAUTH_CLIENT) oauthClient?: OAuth2Client,
+        @Optional() private readonly monitoring?: MonitoringService,
+    ) {
+        this.oauthClient = oauthClient ?? new OAuth2Client();
+    }
 
     async canActivate(context: ExecutionContext): Promise<boolean> {
         const request = context.switchToHttp().getRequest();
 
-        // In development, allow webhooks without verification
-        if (process.env.NODE_ENV === 'development' && process.env.SKIP_WEBHOOK_VERIFICATION === 'true') {
-            this.logger.warn('⚠️  Webhook signature verification SKIPPED (development mode)');
+        // Allow explicit opt-out ONLY in local development when explicitly requested
+        if (
+            process.env.NODE_ENV === 'development' &&
+            process.env.SKIP_WEBHOOK_VERIFICATION === 'true'
+        ) {
+            this.logger.warn('⚠️  Google webhook verification SKIPPED (development mode)');
+            if (request.body?.message?.data) {
+                try {
+                    const decoded = Buffer.from(request.body.message.data, 'base64').toString('utf8');
+                    request.googleWebhookData = JSON.parse(decoded);
+                } catch {
+                    // Ignore malformed dev body
+                }
+            }
             return true;
         }
 
         try {
-            // Google Pub/Sub sends the message in a specific format
             const message = request.body?.message;
-
-            if (!message) {
+            if (!message || typeof message !== 'object') {
                 throw new UnauthorizedException('Missing message in Google webhook');
             }
 
-            // Verify the Pub/Sub JWT token if present
-            const authHeader = request.headers.authorization;
+            const authHeader = request.headers?.authorization;
 
-            if (!authHeader || !authHeader.startsWith('Bearer ')) {
-                // If no auth header, check if we have a push endpoint token
-                const pushToken = request.query?.token;
-
-                if (!pushToken || pushToken !== process.env.GOOGLE_PUBSUB_PUSH_TOKEN) {
-                    throw new UnauthorizedException('Invalid or missing Google webhook token');
-                }
+            if (typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
+                const token = authHeader.slice(7).trim();
+                await this.verifyGooglePubSubOidcToken(token);
             } else {
-                // Verify JWT with Google's public keys
-                const token = authHeader.substring(7);
-                await this.verifyGoogleJWT(token);
+                this.verifyPushEndpointToken(request.query?.token);
             }
 
-            // Decode the base64 message data
-            if (message.data) {
-                const decodedData = Buffer.from(message.data, 'base64').toString();
-                request.googleWebhookData = JSON.parse(decodedData);
+            if (!message.data || typeof message.data !== 'string') {
+                throw new UnauthorizedException('Missing message.data in Google webhook');
             }
 
-            this.logger.log('✅ Google webhook signature verified');
+            const decodedData = Buffer.from(message.data, 'base64').toString('utf8');
+            request.googleWebhookData = JSON.parse(decodedData);
+
+            this.logger.log('✅ Google Pub/Sub push notification verified');
             return true;
         } catch (error) {
-            this.logger.error('❌ Google webhook signature verification failed:', error.message);
+            const msg = error instanceof Error ? error.message : String(error);
+            this.logger.error('❌ Google webhook verification failed:', msg);
+            await this.monitoring?.recordFailure(
+                'payment_webhook',
+                `Google webhook verification failed: ${msg}`,
+                { provider: 'GOOGLE' },
+                error,
+            );
             throw new UnauthorizedException('Invalid Google webhook signature');
         }
     }
 
     /**
-     * Verify Google JWT signature
+     * Verify Google Cloud Pub/Sub OIDC Bearer token using google-auth-library.
      */
-    private async verifyGoogleJWT(jwt: string): Promise<void> {
-        const parts = jwt.split('.');
-        if (parts.length !== 3) {
-            throw new UnauthorizedException('Invalid JWT format in Google webhook');
+    private async verifyGooglePubSubOidcToken(idToken: string): Promise<void> {
+        if (!idToken) {
+            throw new UnauthorizedException('Empty Bearer token in Google webhook');
         }
 
-        // Decode header and payload
-        const header = JSON.parse(Buffer.from(parts[0], 'base64url').toString());
-        const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString());
+        const expectedAudiences = [
+            process.env.GOOGLE_PUBSUB_AUDIENCE,
+            process.env.GOOGLE_CLOUD_PROJECT_ID,
+        ]
+            .map((v) => v?.trim())
+            .filter((v): v is string => Boolean(v));
 
-        // Get Google's public keys
-        const publicKeys = await this.getGooglePublicKeys();
-
-        // Find the key matching the kid in the JWT header
-        const publicKey = publicKeys[header.kid];
-        if (!publicKey) {
-            throw new UnauthorizedException('Public key not found for kid: ' + header.kid);
+        if (expectedAudiences.length === 0) {
+            throw new UnauthorizedException(
+                'Google Pub/Sub audience is not configured (set GOOGLE_PUBSUB_AUDIENCE)',
+            );
         }
 
-        // Extract signature and data
-        const signature = Buffer.from(parts[2], 'base64url');
-        const data = `${parts[0]}.${parts[1]}`;
-
-        // Verify signature
-        const verifier = crypto.createVerify('RSA-SHA256');
-        verifier.update(data);
-        const isValid = verifier.verify(publicKey, signature);
-
-        if (!isValid) {
-            throw new UnauthorizedException('Invalid JWT signature');
-        }
-
-        // Validate claims
-        this.validateGoogleClaims(payload);
-    }
-
-    /**
-     * Fetch Google's public keys (with caching)
-     */
-    private async getGooglePublicKeys(): Promise<{ [kid: string]: string }> {
-        const now = Date.now();
-
-        // Return cached keys if still valid (cache for 1 hour)
-        if (Object.keys(this.publicKeysCache).length > 0 && now < this.publicKeysCacheExpiry) {
-            return this.publicKeysCache;
-        }
-
-        // Fetch new keys
-        return new Promise((resolve, reject) => {
-            https.get('https://www.googleapis.com/oauth2/v3/certs', (res) => {
-                let data = '';
-
-                res.on('data', (chunk) => {
-                    data += chunk;
-                });
-
-                res.on('end', () => {
-                    try {
-                        const parsed = JSON.parse(data);
-                        const keys: { [kid: string]: string } = {};
-
-                        // Convert JWKs to PEM format
-                        if (parsed.keys) {
-                            for (const key of parsed.keys) {
-                                keys[key.kid] = this.jwkToPem(key);
-                            }
-                        }
-
-                        this.publicKeysCache = keys;
-                        this.publicKeysCacheExpiry = now + 3600000; // 1 hour
-                        resolve(this.publicKeysCache);
-                    } catch (error) {
-                        reject(new Error('Failed to parse Google public keys'));
-                    }
-                });
-            }).on('error', (error) => {
-                reject(new Error('Failed to fetch Google public keys: ' + error.message));
-            });
+        const ticket = await this.oauthClient.verifyIdToken({
+            idToken,
+            audience:
+                expectedAudiences.length === 1 ? expectedAudiences[0] : expectedAudiences,
         });
-    }
 
-    /**
-     * Convert JWK to PEM format
-     */
-    private jwkToPem(jwk: any): string {
-        // This is a simplified version - in production use a library like 'jwk-to-pem'
-        const modulus = Buffer.from(jwk.n, 'base64url');
-        const exponent = Buffer.from(jwk.e, 'base64url');
+        const payload = ticket.getPayload();
+        if (!payload) {
+            throw new UnauthorizedException('Empty OIDC token payload');
+        }
 
-        // For RSA keys, we need to construct the proper ASN.1 structure
-        // This is simplified - consider using 'jwk-to-pem' library for production
-        const modulusHex = modulus.toString('hex');
-        const exponentHex = exponent.toString('hex');
-
-        return `-----BEGIN PUBLIC KEY-----\n${Buffer.from(modulusHex + exponentHex, 'hex').toString('base64')}\n-----END PUBLIC KEY-----`;
-    }
-
-    /**
-     * Validate Google JWT claims
-     */
-    private validateGoogleClaims(payload: any): void {
-        // Validate issuer
         const validIssuers = ['accounts.google.com', 'https://accounts.google.com'];
-        if (!validIssuers.includes(payload.iss)) {
-            throw new UnauthorizedException('Invalid issuer');
+        if (!payload.iss || !validIssuers.includes(payload.iss)) {
+            throw new UnauthorizedException(`Invalid Google OIDC issuer: ${payload.iss}`);
         }
 
-        // Validate audience (should match your Google Cloud project)
-        if (process.env.GOOGLE_CLOUD_PROJECT_ID && payload.aud !== process.env.GOOGLE_CLOUD_PROJECT_ID) {
-            throw new UnauthorizedException('Invalid audience');
+        if (payload.email_verified !== true) {
+            throw new UnauthorizedException('Google Pub/Sub service account email is not verified');
         }
 
-        // Validate expiration
-        const now = Math.floor(Date.now() / 1000);
-        if (payload.exp && payload.exp < now) {
-            throw new UnauthorizedException('JWT expired');
+        const expectedEmail = process.env.GOOGLE_PUBSUB_SERVICE_ACCOUNT_EMAIL?.trim();
+        if (expectedEmail && payload.email !== expectedEmail) {
+            throw new UnauthorizedException('Google Pub/Sub service account email mismatch');
+        }
+    }
+
+    /**
+     * Fallback shared push-secret verification when OIDC Authorization header is not used.
+     */
+    private verifyPushEndpointToken(rawToken: unknown): void {
+        const expectedToken = process.env.GOOGLE_PUBSUB_PUSH_TOKEN?.trim();
+        if (
+            !expectedToken ||
+            expectedToken.includes('GENERATE_WITH_OPENSSL') ||
+            typeof rawToken !== 'string' ||
+            !rawToken
+        ) {
+            throw new UnauthorizedException('Invalid or missing Google webhook token');
         }
 
-        // Validate issued at
-        if (payload.iat && payload.iat > now + 300) { // Allow 5 minutes clock skew
-            throw new UnauthorizedException('JWT issued in the future');
+        const providedBuf = Buffer.from(rawToken, 'utf8');
+        const expectedBuf = Buffer.from(expectedToken, 'utf8');
+        if (
+            providedBuf.length !== expectedBuf.length ||
+            !crypto.timingSafeEqual(providedBuf, expectedBuf)
+        ) {
+            throw new UnauthorizedException('Google webhook push token mismatch');
         }
     }
 }

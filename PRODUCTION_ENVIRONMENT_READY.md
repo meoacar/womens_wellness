@@ -152,13 +152,13 @@ railway login
 # Project oluştur
 railway init
 
-# Environment variables ekle
+# Environment variables ekle (sunucu/panel gizli değişkenlerinden girin)
 railway variables set NODE_ENV=production
-railway variables set DATABASE_URL="postgresql://postgres.ujaynuggtchjstzuuevu:Djcoder-0539@aws-1-eu-west-1.pooler.supabase.com:5432/postgres"
-railway variables set REDIS_URL="redis://default:AZRaAAIncDE1YTdjNmQ2OTdmYTc0Y2RhYjYzMjc4NGU4YjI3N2FkN3AxMzc5Nzg@accepted-amoeba-37978.upstash.io:6379"
-railway variables set JWT_SECRET="21f55bde9907fc8c280cfe6ea47b39ba34d34cf973672e35e755ff6b22a731bb"
-railway variables set JWT_REFRESH_SECRET="9b6dcd8d7fe0f18ad215c9a16856fe61b09b3aa94169251ff44d65ff01703050"
-railway variables set GOOGLE_GENERATIVE_AI_API_KEY="AIzaSyArsj_MOo35BWvysA2yNufN69_h2QaH0LU"
+railway variables set DATABASE_URL="postgresql://postgres.<PROJECT_REF>:<ROTATED_DB_PASSWORD>@aws-1-eu-west-1.pooler.supabase.com:5432/postgres"
+railway variables set REDIS_URL="redis://default:<ROTATED_REDIS_PASSWORD>@<UPSTASH_HOST>.upstash.io:6379"
+railway variables set JWT_SECRET="<GENERATE_WITH_OPENSSL_RAND_HEX_32>"
+railway variables set JWT_REFRESH_SECRET="<GENERATE_WITH_OPENSSL_RAND_HEX_32>"
+railway variables set GOOGLE_GENERATIVE_AI_API_KEY="<ROTATED_GEMINI_API_KEY>"
 
 # Deploy
 cd apps/api

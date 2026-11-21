@@ -26,7 +26,7 @@ interface WaterTodayData {
 }
 
 const QUICK_OPTIONS = [
-  { ml: 250, label: '250 ml', subtitle: 'Su Bardağı', icon: '🥛' },
+  { ml: 200, label: '200 ml', subtitle: 'Su Bardağı', icon: '🥛' },
   { ml: 500, label: '500 ml', subtitle: 'Küçük Şişe', icon: '💧' },
   { ml: 750, label: '750 ml', subtitle: 'Spor Matarası', icon: '🫗' },
   { ml: 1000, label: '1000 ml', subtitle: '1 Litre Sürahi', icon: '🌊' },
@@ -37,6 +37,7 @@ export default function WaterScreen() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const [amount, setAmount] = useState('');
+  const [unit, setUnit] = useState<'ml' | 'L'>('ml');
   const [displayMl, setDisplayMl] = useState(0);
   const [lastAddedMl, setLastAddedMl] = useState<number | null>(null);
 
@@ -231,6 +232,8 @@ export default function WaterScreen() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['waterToday'] });
       queryClient.invalidateQueries({ queryKey: ['homeSnapshot'] });
+      queryClient.invalidateQueries({ queryKey: ['dailyTasks'] });
+      queryClient.invalidateQueries({ queryKey: ['gamification'] });
     },
     onError: (error: any) => {
       if (todayData?.totalMl !== undefined) {
@@ -240,24 +243,71 @@ export default function WaterScreen() {
     },
   });
 
-  const handleQuickAdd = (ml: number) => {
-    const nextTotal = displayMl + ml;
-    setDisplayMl(nextTotal);
-    playPourAnimation(ml, nextTotal);
-    addWaterMutation.mutate(ml);
-  };
-
-  const handleCustomAdd = () => {
-    const ml = parseInt(amount, 10);
-    if (isNaN(ml) || ml <= 0) {
-      Alert.alert('Hata', 'Lütfen geçerli bir miktar girin');
-      return;
-    }
+  const commitAddWater = (ml: number) => {
     const nextTotal = displayMl + ml;
     setDisplayMl(nextTotal);
     setAmount('');
     playPourAnimation(ml, nextTotal);
     addWaterMutation.mutate(ml);
+  };
+
+  const handleQuickAdd = (ml: number) => {
+    commitAddWater(ml);
+  };
+
+  const normalizedInput = amount.trim().replace(',', '.');
+  const parsedAmount = parseFloat(normalizedInput);
+  const hasDecimal = normalizedInput.includes('.') && !Number.isNaN(parsedAmount);
+  const computedPreviewMl =
+    !Number.isNaN(parsedAmount) && parsedAmount > 0
+      ? unit === 'L' || hasDecimal
+        ? Math.round(parsedAmount * 1000)
+        : Math.round(parsedAmount)
+      : 0;
+
+  const handleCustomAdd = () => {
+    if (Number.isNaN(parsedAmount) || parsedAmount <= 0) {
+      Alert.alert('Hata', 'Lütfen geçerli bir miktar girin (örn: 200 ml veya 1.5 L)');
+      return;
+    }
+
+    // In Litre mode or decimal entry (e.g. 1.5), convert to milliliters automatically
+    if (unit === 'L' || hasDecimal) {
+      const ml = Math.round(parsedAmount * 1000);
+      if (ml <= 0 || ml > 15000) {
+        Alert.alert('Hata', 'Lütfen geçerli bir miktar girin (en fazla 15 Litre)');
+        return;
+      }
+      commitAddWater(ml);
+      return;
+    }
+
+    const intMl = Math.round(parsedAmount);
+    // If user entered a small integer (1..10) in ml mode, confirm whether they meant Liters
+    if (intMl >= 1 && intMl <= 10) {
+      Alert.alert(
+        'Litre mi Girdiniz?',
+        `${intMl} sayısı ${intMl} Litre (${intMl * 1000} ml) olarak eklensin mi?`,
+        [
+          {
+            text: `Hayır (${intMl} ml)`,
+            onPress: () => commitAddWater(intMl),
+          },
+          {
+            text: `Evet (${intMl} Litre / ${intMl * 1000} ml)`,
+            onPress: () => commitAddWater(intMl * 1000),
+          },
+        ],
+      );
+      return;
+    }
+
+    if (intMl > 15000) {
+      Alert.alert('Hata', 'Tek seferde en fazla 15000 ml ekleyebilirsiniz');
+      return;
+    }
+
+    commitAddWater(intMl);
   };
 
   const percentage = Math.min(Math.round((displayMl / dailyTargetMl) * 100), 100);
@@ -483,13 +533,35 @@ export default function WaterScreen() {
 
         {/* Custom Amount */}
         <View style={styles.customSection}>
-          <Text style={styles.sectionTitle}>Özel Miktar (ml)</Text>
+          <View style={styles.customHeaderRow}>
+            <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>
+              Özel Miktar ({unit === 'L' ? 'Litre' : 'ml'})
+            </Text>
+            <View style={styles.unitToggle}>
+              <TouchableOpacity
+                onPress={() => setUnit('ml')}
+                style={[styles.unitBtn, unit === 'ml' && styles.unitBtnActive]}
+              >
+                <Text style={[styles.unitBtnText, unit === 'ml' && styles.unitBtnTextActive]}>
+                  ml
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => setUnit('L')}
+                style={[styles.unitBtn, unit === 'L' && styles.unitBtnActive]}
+              >
+                <Text style={[styles.unitBtnText, unit === 'L' && styles.unitBtnTextActive]}>
+                  Litre (L)
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
           <View style={styles.customInputRow}>
             <TextInput
               style={styles.input}
-              placeholder="Örn: 330"
+              placeholder={unit === 'L' ? 'Örn: 1.5 veya 2' : 'Örn: 330 veya 1.5 (L)'}
               placeholderTextColor={theme.colors.textLight}
-              keyboardType="numeric"
+              keyboardType="decimal-pad"
               value={amount}
               onChangeText={setAmount}
             />
@@ -501,6 +573,11 @@ export default function WaterScreen() {
               <Text style={styles.addButtonText}>+ Ekle</Text>
             </TouchableOpacity>
           </View>
+          {computedPreviewMl > 0 && (
+            <Text style={styles.previewHint}>
+              = {computedPreviewMl} ml ({(computedPreviewMl / 1000).toFixed(2).replace(/\.?0+$/, '')} L) olarak eklenecek
+            </Text>
+          )}
         </View>
 
         {/* Today's Water Logs */}
@@ -734,6 +811,43 @@ const createStyles = (theme: ReturnType<typeof useTheme>) =>
     },
     customSection: {
       marginBottom: theme.spacing.xl,
+    },
+    customHeaderRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: theme.spacing.md,
+    },
+    unitToggle: {
+      flexDirection: 'row',
+      backgroundColor: theme.colors.backgroundCard,
+      borderRadius: 10,
+      padding: 3,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      gap: 4,
+    },
+    unitBtn: {
+      paddingHorizontal: 10,
+      paddingVertical: 5,
+      borderRadius: 8,
+    },
+    unitBtnActive: {
+      backgroundColor: '#0284C7',
+    },
+    unitBtnText: {
+      fontSize: 12,
+      fontWeight: '700',
+      color: theme.colors.textSecondary,
+    },
+    unitBtnTextActive: {
+      color: '#FFFFFF',
+    },
+    previewHint: {
+      marginTop: 8,
+      fontSize: 12.5,
+      fontWeight: '600',
+      color: '#0284C7',
     },
     customInputRow: {
       flexDirection: 'row',

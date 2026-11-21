@@ -1,4 +1,5 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, HttpStatus, Res } from '@nestjs/common';
+import { FastifyReply } from 'fastify';
 import { AppService } from './app.service';
 
 @Controller()
@@ -10,9 +11,13 @@ export class AppController {
     return this.appService.getHello();
   }
 
-  @Get('healthz')
-  async healthCheck() {
-    return this.appService.getHealthStatus();
+  @Get(['healthz', 'health'])
+  async healthCheck(@Res({ passthrough: true }) res?: FastifyReply) {
+    const health = await this.appService.getHealthStatus();
+    if (health.status === 'unhealthy' && res) {
+      res.status(HttpStatus.SERVICE_UNAVAILABLE);
+    }
+    return health;
   }
 
   @Get('public/site-summary')

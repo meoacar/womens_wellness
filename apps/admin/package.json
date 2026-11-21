@@ -6,7 +6,7 @@
     "dev": "next dev -p 3001",
     "build": "next build",
     "start": "next start -p 3000",
-    "lint": "next lint"
+    "lint": "node ../../apps/api/node_modules/eslint/bin/eslint.js --resolve-plugins-relative-to ../../node_modules/.pnpm/node_modules \"src/**/*.{ts,tsx}\""
   },
   "dependencies": {
     "@ant-design/charts": "^2.6.7",
@@ -18,9 +18,9 @@
     "@refinedev/simple-rest": "^5.0.1",
     "@tanstack/react-query": "^4.41.0",
     "antd": "^5.12.2",
-    "axios": "^1.6.2",
+    "axios": "^1.21.1",
     "dayjs": "^1.11.10",
-    "next": "14.0.4",
+    "next": "15.5.29",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   },

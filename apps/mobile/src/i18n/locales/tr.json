@@ -37,8 +37,8 @@
       "water": {
         "title": "Su",
         "target": "Hedef",
-        "noData": "Bugün henüz kayıt yok – +250 ml ile başla",
-        "quickAdd250": "+250 ml",
+        "noData": "Bugün henüz kayıt yok – +200 ml ile başla",
+        "quickAdd250": "+200 ml",
         "quickAdd500": "+500 ml"
       },
       "steps": {

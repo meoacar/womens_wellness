@@ -10,6 +10,7 @@ import {
   Alert,
   RefreshControl,
   Dimensions,
+  Switch,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -17,9 +18,12 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Platform } from 'react-native';
 import { useTheme } from '@/hooks/useTheme';
+import { usePedometer } from '@/hooks/usePedometer';
 import { wellnessService } from '@/services/api';
+import { pedometerSyncService } from '@/services/pedometerSync';
 import { useAuthStore } from '@/store/authStore';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 
 const { width } = Dimensions.get('window');
 const BAR_WIDTH = (width - 80) / 7; // 7 bars with spacing
@@ -37,6 +41,20 @@ export default function StepsScreen() {
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [timeFilter, setTimeFilter] = useState<'week' | 'month'>('week');
+  const {
+    isPedometerAvailable,
+    hasPermission,
+    isEnabled: isAutoEnabled,
+    liveNotificationEnabled,
+    isAutoActive,
+    totalSteps: autoSteps,
+    isSyncing: isAutoSyncing,
+    enableAndStart,
+    setAutoEnabled,
+    setLiveNotificationEnabled,
+    updateStepGoal,
+    syncNow,
+  } = usePedometer();
 
   const styles = createStyles(theme);
 
@@ -71,6 +89,12 @@ export default function StepsScreen() {
     enabled: isAuthenticated,
     retry: false,
   });
+
+  useEffect(() => {
+    if (typeof preferences?.stepsGoal === 'number' && preferences.stepsGoal > 0) {
+      updateStepGoal(preferences.stepsGoal);
+    }
+  }, [preferences?.stepsGoal]);
 
   // Show error state (only for actual errors, not loading states)
   useEffect(() => {
@@ -109,9 +133,20 @@ export default function StepsScreen() {
         count: data.count,
         isManual: true,
       }),
-    onSuccess: async () => {
+    onSuccess: async (_res, variables) => {
+      const targetDate = new Date(variables.date);
+      const now = new Date();
+      if (
+        targetDate.getFullYear() === now.getFullYear() &&
+        targetDate.getMonth() === now.getMonth() &&
+        targetDate.getDate() === now.getDate()
+      ) {
+        await pedometerSyncService.recordManualSteps(variables.count);
+      }
       await queryClient.invalidateQueries({ queryKey: ['steps'] });
       await queryClient.invalidateQueries({ queryKey: ['homeSnapshot'] });
+      await queryClient.invalidateQueries({ queryKey: ['dailyTasks'] });
+      await queryClient.invalidateQueries({ queryKey: ['gamification'] });
       await refetch();
       setModalVisible(false);
       setStepsInput('');
@@ -125,7 +160,8 @@ export default function StepsScreen() {
   const updateGoalMutation = useMutation({
     mutationFn: (goal: number) =>
       wellnessService.updatePreferences({ stepsGoal: goal }),
-    onSuccess: () => {
+    onSuccess: (_res, goal) => {
+      updateStepGoal(goal);
       queryClient.invalidateQueries({ queryKey: ['wellnessPreferences'] });
       queryClient.invalidateQueries({ queryKey: ['homeSnapshot'] });
       setGoalModalVisible(false);
@@ -138,6 +174,7 @@ export default function StepsScreen() {
 
   const handleRefresh = async () => {
     setRefreshing(true);
+    await syncNow().catch(() => {});
     await refetch();
     setRefreshing(false);
   };
@@ -236,8 +273,9 @@ export default function StepsScreen() {
   };
 
   const stats = calculateStats();
+  const liveToday = Math.max(stats.today, isAutoActive ? autoSteps : 0);
   const goal = safePreferences?.stepsGoal || 7000;
-  const percentage = Math.round((stats.today / goal) * 100);
+  const percentage = Math.round((liveToday / goal) * 100);
 
   // Get last 7 days for chart
   const getLast7Days = () => {
@@ -245,8 +283,8 @@ export default function StepsScreen() {
     const today = new Date();
     for (let i = 6; i >= 0; i--) {
       const date = new Date(today);
-      date.setUTCDate(date.getUTCDate() - i);
-      const dateUTC = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
+      date.setDate(date.getDate() - i);
+      const dateUTC = Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
 
       const record = safeStepsData?.find((s: any) => {
         const d = new Date(s.date);
@@ -256,7 +294,7 @@ export default function StepsScreen() {
 
       days.push({
         date,
-        count: record?.count || 0,
+        count: i === 0 ? Math.max(record?.count || 0, liveToday) : record?.count || 0,
         dayName: date.toLocaleDateString('tr-TR', { weekday: 'short' }),
       });
     }
@@ -268,7 +306,7 @@ export default function StepsScreen() {
 
   if (isLoading && !stepsData && !preferences) {
     return (
-      <SafeAreaView style={styles.safeArea} edges={['top']}>
+      <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
         <View style={styles.loadingContainer}>
           <Text style={styles.loadingText}>Yükleniyor...</Text>
         </View>
@@ -277,19 +315,21 @@ export default function StepsScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={['top']}>
-      {/* Header */}
+    <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
+      {/* Modern Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-          <Text style={styles.backButtonText}>Geri</Text>
+        <TouchableOpacity onPress={() => router.back()} style={styles.headerCircleBtn}>
+          <Ionicons name="chevron-back" size={20} color={theme.colors.text} />
         </TouchableOpacity>
         <View style={styles.headerTitleContainer}>
-          <Text style={styles.headerTitle}>Adım</Text>
+          <Text style={styles.headerTitle}>Adım Takibi</Text>
           <Text style={styles.headerSubtitle}>
             {new Date().toLocaleDateString('tr-TR', { day: 'numeric', month: 'long' })}
           </Text>
         </View>
-        <View style={styles.headerRight} />
+        <TouchableOpacity onPress={() => setGoalModalVisible(true)} style={styles.headerCircleBtn}>
+          <Ionicons name="options-outline" size={19} color="#10B981" />
+        </TouchableOpacity>
       </View>
 
       <ScrollView
@@ -297,55 +337,191 @@ export default function StepsScreen() {
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={theme.colors.primary} />
+          <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor="#10B981" />
         }
       >
-        {/* Today Card */}
-        <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <Text style={styles.cardTitle}>Bugün</Text>
-            <View style={styles.statusChips}>
-              {stats.today >= goal && (
-                <View style={[styles.chip, styles.chipSuccess]}>
-                  <Text style={styles.chipText}>✓ Hedefe ulaştın!</Text>
-                </View>
-              )}
+        {/* Emerald Gradient Hero Card */}
+        <LinearGradient
+          colors={['#059669', '#10B981', '#0EA5E9']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.heroCard}
+        >
+          <View style={styles.heroTopRow}>
+            <View style={styles.heroBadge}>
+              <Ionicons name="footsteps" size={15} color="#FFFFFF" />
+              <Text style={styles.heroBadgeText}>BUGÜNKÜ HAREKET</Text>
+            </View>
+            <View style={styles.heroPctPill}>
+              <Text style={styles.heroPctText}>
+                {liveToday >= goal ? '✓ Tamamlandı' : `%${percentage}`}
+              </Text>
             </View>
           </View>
 
-          <View style={styles.metricContainer}>
-            <Text style={styles.metricValue}>{formatNumber(stats.today)}</Text>
-            <Text style={styles.metricUnit}>adım</Text>
+          <View style={styles.heroMetricRow}>
+            <Text style={styles.heroMetricValue}>{formatNumber(liveToday)}</Text>
+            <Text style={styles.heroMetricUnit}>adım</Text>
           </View>
 
-          <View style={styles.progressBarContainer}>
-            <View style={styles.progressBarBackground}>
-              <View
-                style={[
-                  styles.progressBarFill,
-                  { width: `${Math.min(percentage, 100)}%` },
-                ]}
-              />
+          <View style={styles.heroSubStatsRow}>
+            <View style={styles.heroMiniChip}>
+              <Ionicons name="navigate-outline" size={13} color="#ECFDF5" />
+              <Text style={styles.heroMiniChipText}>
+                ~{((liveToday * 0.75) / 1000).toFixed(1)} km
+              </Text>
             </View>
-            <Text style={styles.progressText}>
-              {percentage}% · Hedef {formatNumber(goal)}
-            </Text>
+            <View style={styles.heroMiniChip}>
+              <Ionicons name="flame-outline" size={13} color="#ECFDF5" />
+              <Text style={styles.heroMiniChipText}>
+                ~{Math.round(liveToday * 0.04)} kcal
+              </Text>
+            </View>
+            <View style={styles.heroMiniChip}>
+              <Ionicons name="flag-outline" size={13} color="#ECFDF5" />
+              <Text style={styles.heroMiniChipText}>
+                Hedef {formatNumber(goal)}
+              </Text>
+            </View>
           </View>
 
-          <View style={styles.actions}>
+          <View style={styles.heroProgressTrack}>
+            <View
+              style={[
+                styles.heroProgressFill,
+                { width: `${Math.min(percentage, 100)}%` },
+              ]}
+            />
+          </View>
+
+          <Text style={styles.heroQuickLabel}>Tek dokunuşla ekle:</Text>
+          <View style={styles.heroQuickRow}>
+            {[1000, 2500, 5000].map((addVal) => (
+              <TouchableOpacity
+                key={addVal}
+                style={styles.heroQuickBtn}
+                disabled={logStepsMutation.isPending}
+                onPress={() =>
+                  logStepsMutation.mutate({
+                    date: new Date().toISOString(),
+                    count: liveToday + addVal,
+                  })
+                }
+              >
+                <Text style={styles.heroQuickBtnText}>+{formatNumber(addVal)}</Text>
+              </TouchableOpacity>
+            ))}
             <TouchableOpacity
-              style={[styles.actionButton, styles.actionButtonPrimary]}
+              style={[styles.heroQuickBtn, styles.heroQuickBtnSolid]}
               onPress={() => setModalVisible(true)}
             >
-              <Text style={styles.actionButtonTextPrimary}>Manuel Ekle</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.actionButton}
-              onPress={() => setGoalModalVisible(true)}
-            >
-              <Text style={styles.actionButtonText}>Hedefi Düzenle</Text>
+              <Text style={styles.heroQuickBtnSolidText}>Özel</Text>
             </TouchableOpacity>
           </View>
+        </LinearGradient>
+
+        {/* Automatic Phone Pedometer Card */}
+        <View style={styles.card}>
+          <View style={styles.autoHeaderRow}>
+            <View style={styles.autoTitleRow}>
+              <View style={styles.autoIconBox}>
+                <Ionicons name="walk-outline" size={18} color="#10B981" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.autoTitle}>Otomatik Adım Sayar</Text>
+                <Text style={styles.autoSub}>
+                  {!isPedometerAvailable
+                    ? 'Bu cihazda adım sensörü desteklenmiyor'
+                    : hasPermission !== true
+                      ? 'Telefon adımlarını otomatik eklemek için izin ver'
+                      : isAutoEnabled
+                        ? 'Aktif • Telefon sensöründen otomatik ekleniyor'
+                        : 'Duraklatıldı'}
+                </Text>
+              </View>
+            </View>
+            {isPedometerAvailable && hasPermission === true && (
+              <Switch
+                value={isAutoEnabled}
+                onValueChange={(val) => {
+                  void setAutoEnabled(val);
+                }}
+                trackColor={{ false: theme.colors.border, true: '#10B981' }}
+                thumbColor="#FFFFFF"
+              />
+            )}
+          </View>
+
+          {isPedometerAvailable && hasPermission !== true && (
+            <TouchableOpacity
+              style={styles.autoCtaBtn}
+              onPress={async () => {
+                const ok = await enableAndStart();
+                if (!ok) {
+                  Alert.alert(
+                    'İzin Gerekli',
+                    'Otomatik adım sayar için telefon ayarlarından Fiziksel Aktivite iznine izin verebilirsiniz.',
+                  );
+                } else {
+                  await refetch();
+                }
+              }}
+              activeOpacity={0.85}
+            >
+              <Ionicons name="shield-checkmark-outline" size={16} color="#FFFFFF" />
+              <Text style={styles.autoCtaBtnText}>İzin Ver ve Otomatik Başlat</Text>
+            </TouchableOpacity>
+          )}
+
+          {isPedometerAvailable && hasPermission === true && isAutoEnabled && (
+            <>
+              {Platform.OS === 'android' && (
+                <View style={styles.notifToggleRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.notifToggleTitle}>Kilit Ekranı &amp; Bildirim Takibi</Text>
+                    <Text style={styles.notifToggleSub}>
+                      Adım, kalori ve regl bilgini bildirim çubuğunda canlı göster
+                    </Text>
+                  </View>
+                  <Switch
+                    value={liveNotificationEnabled}
+                    onValueChange={async (val) => {
+                      const ok = await setLiveNotificationEnabled(val);
+                      if (val && !ok) {
+                        Alert.alert(
+                          'Bildirim İzni Gerekli',
+                          'Kilit ekranı adım & döngü kartını gösterebilmek için telefon ayarlarından Kadın Atlası bildirim iznini açabilirsiniz.',
+                        );
+                      }
+                    }}
+                    trackColor={{ false: theme.colors.border, true: '#F97316' }}
+                    thumbColor="#FFFFFF"
+                  />
+                </View>
+              )}
+              <View style={styles.autoFooterRow}>
+                <View style={styles.autoStatusPill}>
+                  <View style={styles.autoLiveDot} />
+                  <Text style={styles.autoStatusText}>
+                    Bugün sensör: {formatNumber(autoSteps)} adım
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  style={styles.autoSyncBtn}
+                  disabled={isAutoSyncing}
+                  onPress={async () => {
+                    await syncNow();
+                    await refetch();
+                  }}
+                >
+                  <Ionicons name="sync-outline" size={14} color="#059669" />
+                  <Text style={styles.autoSyncText}>
+                    {isAutoSyncing ? 'Eşitleniyor...' : 'Eşitle'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </>
+          )}
         </View>
 
         {/* Weekly Chart */}
@@ -354,20 +530,29 @@ export default function StepsScreen() {
 
           <View style={styles.chartContainer}>
             {last7Days.map((day, index) => {
-              const barHeight = maxCount > 0 ? (day.count / maxCount) * 120 : 0;
+              const barHeight = maxCount > 0 ? (day.count / maxCount) * 116 : 0;
               const isGoalReached = day.count >= goal;
+              const shortLabel =
+                day.count >= 1000
+                  ? `${(day.count / 1000).toFixed(1).replace(/\.0$/, '')}k`
+                  : day.count > 0
+                    ? String(day.count)
+                    : '';
 
               return (
                 <View key={index} style={styles.barContainer}>
+                  <Text style={styles.barValLabel}>{shortLabel}</Text>
                   <View style={styles.barWrapper}>
                     <View
                       style={[
                         styles.bar,
                         {
-                          height: barHeight,
+                          height: Math.max(barHeight, day.count > 0 ? 6 : 3),
                           backgroundColor: isGoalReached
-                            ? theme.colors.primary
-                            : theme.colors.textSecondary + '40',
+                            ? '#10B981'
+                            : day.count > 0
+                              ? '#34D399'
+                              : theme.colors.textSecondary + '30',
                         },
                       ]}
                     />
@@ -907,5 +1092,253 @@ const createStyles = (theme: ReturnType<typeof useTheme>) =>
       fontSize: 16,
       fontWeight: '600',
       color: theme.colors.textOnPrimary,
+    },
+    headerCircleBtn: {
+      width: 38,
+      height: 38,
+      borderRadius: 14,
+      backgroundColor: theme.colors.backgroundCard,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    heroCard: {
+      borderRadius: 24,
+      padding: 20,
+      marginBottom: theme.spacing.lg,
+      shadowColor: '#059669',
+      shadowOffset: { width: 0, height: 8 },
+      shadowOpacity: 0.25,
+      shadowRadius: 16,
+      elevation: 6,
+    },
+    heroTopRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 14,
+    },
+    heroBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      backgroundColor: 'rgba(255,255,255,0.2)',
+      paddingHorizontal: 10,
+      paddingVertical: 5,
+      borderRadius: 999,
+    },
+    heroBadgeText: {
+      color: '#FFFFFF',
+      fontSize: 10.5,
+      fontWeight: '800',
+      letterSpacing: 0.7,
+    },
+    heroPctPill: {
+      backgroundColor: '#FFFFFF',
+      paddingHorizontal: 10,
+      paddingVertical: 4,
+      borderRadius: 999,
+    },
+    heroPctText: {
+      color: '#059669',
+      fontSize: 12,
+      fontWeight: '800',
+    },
+    heroMetricRow: {
+      flexDirection: 'row',
+      alignItems: 'baseline',
+      gap: 8,
+      marginBottom: 12,
+    },
+    heroMetricValue: {
+      fontSize: 44,
+      fontWeight: '900',
+      color: '#FFFFFF',
+      letterSpacing: -1,
+    },
+    heroMetricUnit: {
+      fontSize: 18,
+      fontWeight: '700',
+      color: 'rgba(255,255,255,0.88)',
+    },
+    heroSubStatsRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+      marginBottom: 14,
+    },
+    heroMiniChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      backgroundColor: 'rgba(255,255,255,0.16)',
+      paddingHorizontal: 10,
+      paddingVertical: 5,
+      borderRadius: 999,
+    },
+    heroMiniChipText: {
+      color: '#FFFFFF',
+      fontSize: 12,
+      fontWeight: '700',
+    },
+    heroProgressTrack: {
+      height: 8,
+      borderRadius: 999,
+      backgroundColor: 'rgba(255,255,255,0.25)',
+      overflow: 'hidden',
+      marginBottom: 14,
+    },
+    heroProgressFill: {
+      height: '100%',
+      borderRadius: 999,
+      backgroundColor: '#FFFFFF',
+    },
+    heroQuickLabel: {
+      color: 'rgba(255,255,255,0.88)',
+      fontSize: 12,
+      fontWeight: '700',
+      marginBottom: 8,
+    },
+    heroQuickRow: {
+      flexDirection: 'row',
+      gap: 8,
+    },
+    heroQuickBtn: {
+      flex: 1,
+      backgroundColor: 'rgba(255,255,255,0.18)',
+      paddingVertical: 9,
+      borderRadius: 12,
+      alignItems: 'center',
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.28)',
+    },
+    heroQuickBtnText: {
+      color: '#FFFFFF',
+      fontSize: 12.5,
+      fontWeight: '800',
+    },
+    heroQuickBtnSolid: {
+      backgroundColor: '#FFFFFF',
+      borderColor: '#FFFFFF',
+    },
+    heroQuickBtnSolidText: {
+      color: '#059669',
+      fontSize: 12.5,
+      fontWeight: '800',
+    },
+    barValLabel: {
+      fontSize: 10,
+      fontWeight: '700',
+      color: theme.colors.textSecondary,
+      marginBottom: 4,
+      height: 14,
+    },
+    autoHeaderRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 12,
+    },
+    autoTitleRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      flex: 1,
+    },
+    autoIconBox: {
+      width: 38,
+      height: 38,
+      borderRadius: 12,
+      backgroundColor: 'rgba(16, 185, 129, 0.14)',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    autoTitle: {
+      fontSize: 15,
+      fontWeight: '700',
+      color: theme.colors.text,
+    },
+    autoSub: {
+      fontSize: 12.5,
+      color: theme.colors.textSecondary,
+      marginTop: 2,
+      lineHeight: 17,
+    },
+    autoCtaBtn: {
+      marginTop: 12,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      backgroundColor: '#10B981',
+      borderRadius: 12,
+      paddingVertical: 11,
+    },
+    autoCtaBtnText: {
+      color: '#FFFFFF',
+      fontSize: 13.5,
+      fontWeight: '700',
+    },
+    autoFooterRow: {
+      marginTop: 12,
+      paddingTop: 10,
+      borderTopWidth: 1,
+      borderTopColor: theme.colors.border,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 10,
+    },
+    notifToggleRow: {
+      marginTop: 12,
+      paddingTop: 10,
+      borderTopWidth: 1,
+      borderTopColor: theme.colors.border,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 12,
+    },
+    notifToggleTitle: {
+      fontSize: 13.5,
+      fontWeight: '700',
+      color: theme.colors.text,
+    },
+    notifToggleSub: {
+      fontSize: 12,
+      color: theme.colors.textSecondary,
+      marginTop: 2,
+      lineHeight: 16,
+    },
+    autoStatusPill: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+    },
+    autoLiveDot: {
+      width: 8,
+      height: 8,
+      borderRadius: 4,
+      backgroundColor: '#10B981',
+    },
+    autoStatusText: {
+      fontSize: 12.5,
+      fontWeight: '600',
+      color: theme.colors.text,
+    },
+    autoSyncBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 5,
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 10,
+      backgroundColor: 'rgba(16, 185, 129, 0.14)',
+    },
+    autoSyncText: {
+      fontSize: 12,
+      fontWeight: '700',
+      color: '#059669',
     },
   });

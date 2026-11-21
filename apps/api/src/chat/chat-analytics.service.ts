@@ -129,7 +129,7 @@ export class ChatAnalyticsService {
         };
 
         const topicCounts = new Map<string, number>();
-        let totalMessages = messages.length;
+        const totalMessages = messages.length;
 
         for (const msg of messages) {
             const content = msg.content.toLowerCase();

@@ -69,11 +69,14 @@ Thumbs.db
 *.p12
 *.pfx
 .env
+.env.*
+!.env*.example
 .env.local
 .env.*.local
 .env.development.local
 .env.test.local
 .env.production.local
+.env.server
 
 # Secrets and credentials
 secrets/
@@ -92,7 +95,16 @@ docker-compose.override.yml
 # Backups
 backups/
 *.sql
+!apps/api/prisma/migrations/**/*.sql
 *.sql.gz
 
 # Nginx SSL
 nginx/ssl/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Android build cache & Firebase config
+apps/mobile/android/.kotlin/
+apps/mobile/android/app/google-services.json

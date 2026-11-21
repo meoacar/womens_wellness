@@ -16,6 +16,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Ionicons } from '@expo/vector-icons';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
+import * as Print from 'expo-print';
 import { useTheme } from '@/hooks/useTheme';
 import { usePremium } from '@/hooks/usePremium';
 import { UpgradePrompt } from '@/components/premium/UpgradePrompt';
@@ -129,16 +130,29 @@ export default function HealthReportScreen() {
 </body>
 </html>`;
 
-      const fileUri = `${cacheDirectory}kadin-atlasi-klinik-rapor-${days}gun.html`;
-      await writeAsStringAsync(fileUri, html);
       const canShare = await Sharing.isAvailableAsync();
-      if (canShare) {
-        await Sharing.shareAsync(fileUri, {
-          mimeType: 'text/html',
-          dialogTitle: 'Yazdırılabilir Klinik Rapor',
-        });
-      } else {
-        Alert.alert('Hazır', 'Rapor oluşturuldu.');
+      try {
+        const { uri } = await Print.printToFileAsync({ html });
+        if (canShare) {
+          await Sharing.shareAsync(uri, {
+            mimeType: 'application/pdf',
+            dialogTitle: 'Klinik Sağlık Raporu (PDF)',
+            UTI: 'com.adobe.pdf',
+          });
+        } else {
+          Alert.alert('Hazır', 'PDF raporu oluşturuldu.');
+        }
+      } catch {
+        const fileUri = `${cacheDirectory}kadin-atlasi-klinik-rapor-${days}gun.html`;
+        await writeAsStringAsync(fileUri, html);
+        if (canShare) {
+          await Sharing.shareAsync(fileUri, {
+            mimeType: 'text/html',
+            dialogTitle: 'Yazdırılabilir Klinik Rapor',
+          });
+        } else {
+          Alert.alert('Hazır', 'Rapor oluşturuldu.');
+        }
       }
     } catch {
       Alert.alert('Hata', 'Klinik rapor dosyası oluşturulamadı.');

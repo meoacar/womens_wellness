@@ -1,9 +1,15 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Platform } from 'react-native';
+import { AppState, AppStateStatus } from 'react-native';
 import { useRouter } from 'expo-router';
-import { remindersService } from '../services/api';
+import {
+  ensureAndroidNotificationChannels,
+  getOsNotificationPermissionStatus,
+  registerPushTokenWithBackend,
+  requestOsNotificationPermission,
+  syncPendingServerNotifications,
+} from '../services/notificationEngine';
 
 // Configure notification behavior
 Notifications.setNotificationHandler({
@@ -25,108 +31,69 @@ interface NotificationData {
 export function useNotifications() {
   const [expoPushToken, setExpoPushToken] = useState<string>('');
   const [permissionStatus, setPermissionStatus] = useState<'granted' | 'denied' | 'undetermined'>('undetermined');
+  const [canAskAgain, setCanAskAgain] = useState<boolean>(true);
   const notificationListener = useRef<Notifications.Subscription>();
   const responseListener = useRef<Notifications.Subscription>();
   const router = useRouter();
 
-  // Request permissions
-  async function requestPermissions() {
-    try {
-      const { status: existingStatus } = await Notifications.getPermissionsAsync();
-      let finalStatus = existingStatus;
+  const refreshPermissionStatus = useCallback(async () => {
+    const info = await getOsNotificationPermissionStatus();
+    setPermissionStatus(info.status);
+    setCanAskAgain(info.canAskAgain);
+    return info.granted;
+  }, []);
 
-      if (existingStatus !== 'granted') {
-        const { status } = await Notifications.requestPermissionsAsync();
-        finalStatus = status;
-      }
-
-      setPermissionStatus(finalStatus as any);
-
-      if (finalStatus !== 'granted') {
-        // Not a critical error - user can still use the app
-        // This is only for push notifications (reminders, etc.)
-        // In-app notifications (like fun notifications) work without this permission
-        if (__DEV__) {
-          console.log('[Notifications] Push notification permission not granted - push notifications disabled');
-        }
-        return false;
-      }
-
-      if (__DEV__) {
-        console.log('[Notifications] Push notification permission granted');
-      }
-      return true;
-    } catch (error) {
-      console.error('Error requesting notification permissions:', error);
-      return false;
+  // Request OS permissions properly (shows native dialog or opens Settings if permanently blocked)
+  const requestPermissions = useCallback(async (showSettingsPrompt = true) => {
+    const res = await requestOsNotificationPermission({ showSettingsPrompt });
+    setPermissionStatus(res.status);
+    setCanAskAgain(res.canAskAgain);
+    if (res.granted) {
+      const token = await registerPushTokenWithBackend();
+      if (token) setExpoPushToken(token);
+      await syncPendingServerNotifications().catch(() => {});
     }
-  }
+    return res.granted;
+  }, []);
 
-  // Register for push notifications
-  async function registerForPushNotifications() {
+  // Register for push notifications cleanly (only prompts OS if not denied or explicit)
+  const registerForPushNotifications = useCallback(async (forcePrompt = false) => {
     try {
-      // Request permissions first
-      const granted = await requestPermissions();
+      await ensureAndroidNotificationChannels();
+      const status = await getOsNotificationPermissionStatus();
+      setPermissionStatus(status.status);
+      setCanAskAgain(status.canAskAgain);
+
+      let granted = status.granted;
+      if (!granted && (forcePrompt || status.status === 'undetermined')) {
+        const res = await requestOsNotificationPermission({
+          showSettingsPrompt: forcePrompt,
+        });
+        granted = res.granted;
+        setPermissionStatus(res.status);
+        setCanAskAgain(res.canAskAgain);
+      }
+
       if (!granted) return null;
 
-      // Get Expo push token - only if EAS project ID is configured
-      if (!process.env.EXPO_PUBLIC_EAS_PROJECT_ID) {
-        if (__DEV__) {
-          console.log('[Notifications] EAS Project ID not configured - push notifications disabled');
-        }
-        return null;
+      const token = await registerPushTokenWithBackend();
+      if (token) {
+        setExpoPushToken(token);
       }
-
-      const token = await Notifications.getExpoPushTokenAsync({
-        projectId: process.env.EXPO_PUBLIC_EAS_PROJECT_ID,
-      });
-
-      setExpoPushToken(token.data);
-
-      // Register token with backend
-      try {
-        await remindersService.registerPushToken(token.data);
-        if (__DEV__) {
-          console.log('[Notifications] Push token registered with backend');
-        }
-      } catch (error) {
-        console.error('[Notifications] Failed to register push token with backend:', error);
-      }
-
-      // Configure Android channel (required for Android 8+)
-      if (Platform.OS === 'android') {
-        await Notifications.setNotificationChannelAsync('default', {
-          name: 'Hatırlatıcılar',
-          importance: Notifications.AndroidImportance.MAX,
-          vibrationPattern: [0, 250, 250, 250],
-          lightColor: '#FF231F7C',
-          sound: 'default',
-        });
-      }
-
-      return token.data;
+      await syncPendingServerNotifications().catch(() => {});
+      return token;
     } catch (error) {
       console.error('Error registering for push notifications:', error);
       return null;
     }
+  }, []);
+
+  function handleNotificationReceived(_notification: Notifications.Notification) {
+    // Foreground display handled by setNotificationHandler
   }
 
-  // Handle notification received while app is in foreground
-  function handleNotificationReceived(notification: Notifications.Notification) {
-    if (__DEV__) {
-      console.log('[Notifications] Notification received:', notification);
-    }
-    // You can show custom UI here or let the default notification show
-  }
-
-  // Handle notification tap (deep linking)
   function handleNotificationResponse(response: Notifications.NotificationResponse) {
-    const data = response.notification.request.content.data as NotificationData;
-    if (__DEV__) {
-      console.log('[Notifications] Notification tapped:', data);
-    }
-
-    // Route to appropriate screen based on notification data
+    const data = (response.notification.request.content.data || {}) as NotificationData;
     if (data.screen) {
       switch (data.screen) {
         case 'reminders':
@@ -138,39 +105,44 @@ export function useNotifications() {
         case 'chat':
           router.push('/(tabs)/chat');
           break;
+        case 'wellness':
+        case 'steps':
+          router.push('/wellness/steps');
+          break;
         case 'home':
         default:
           router.push('/(tabs)/home');
           break;
       }
     }
-
-    // If specific reminder ID is provided, you can navigate to detail view
-    if (data.reminderId) {
-      // TODO: Navigate to reminder detail if we add that screen
-      if (__DEV__) {
-        console.log('[Notifications] Reminder ID:', data.reminderId);
-      }
-    }
   }
 
-  // Schedule a local notification (respects Quiet Hours 23:00-08:00 when enabled, unless test: true)
   async function scheduleLocalNotification(
     title: string,
     body: string,
     data?: NotificationData,
-    trigger?: Notifications.NotificationTriggerInput
+    trigger?: Notifications.NotificationTriggerInput,
   ) {
     try {
       if (!data?.test) {
         const quietEnabled = await AsyncStorage.getItem('@quiet_hours_enabled');
         if (quietEnabled === 'true') {
+          const [startRaw, endRaw] = await AsyncStorage.multiGet([
+            '@quiet_hours_start',
+            '@quiet_hours_end',
+          ]);
+          const startHour = Number((startRaw?.[1] || '23:00').split(':')[0]);
+          const endHour = Number((endRaw?.[1] || '08:00').split(':')[0]);
           const hour = new Date().getHours();
-          if (hour >= 23 || hour < 8) {
-            return null;
-          }
+          const inQuiet =
+            startHour > endHour
+              ? hour >= startHour || hour < endHour
+              : hour >= startHour && hour < endHour;
+          if (inQuiet) return null;
         }
       }
+
+      await ensureAndroidNotificationChannels();
 
       const id = await Notifications.scheduleNotificationAsync({
         content: {
@@ -179,7 +151,7 @@ export function useNotifications() {
           data: data || {},
           sound: 'default',
         },
-        trigger: trigger || null, // null = show immediately
+        trigger: trigger || null,
       });
       return id;
     } catch (error) {
@@ -188,51 +160,51 @@ export function useNotifications() {
     }
   }
 
-  // Cancel a scheduled notification
   async function cancelNotification(notificationId: string) {
     try {
       await Notifications.cancelScheduledNotificationAsync(notificationId);
-    } catch (error) {
-      console.error('Error canceling notification:', error);
+    } catch {
+      // Ignore
     }
   }
 
-  // Get all scheduled notifications
   async function getScheduledNotifications() {
     try {
       return await Notifications.getAllScheduledNotificationsAsync();
-    } catch (error) {
-      console.error('Error getting scheduled notifications:', error);
+    } catch {
       return [];
     }
   }
 
-  // Setup listeners on mount
   useEffect(() => {
-    // Listener for notifications received while app is in foreground
+    void refreshPermissionStatus();
+
+    const appStateSub = AppState.addEventListener('change', (nextState: AppStateStatus) => {
+      if (nextState === 'active') {
+        void refreshPermissionStatus();
+      }
+    });
+
     notificationListener.current = Notifications.addNotificationReceivedListener(
-      handleNotificationReceived
+      handleNotificationReceived,
     );
 
-    // Listener for user tapping on notification
     responseListener.current = Notifications.addNotificationResponseReceivedListener(
-      handleNotificationResponse
+      handleNotificationResponse,
     );
 
-    // Cleanup listeners on unmount
     return () => {
-      if (notificationListener.current) {
-        notificationListener.current.remove();
-      }
-      if (responseListener.current) {
-        responseListener.current.remove();
-      }
+      appStateSub.remove();
+      notificationListener.current?.remove();
+      responseListener.current?.remove();
     };
-  }, []);
+  }, [refreshPermissionStatus]);
 
   return {
     expoPushToken,
     permissionStatus,
+    canAskAgain,
+    refreshPermissionStatus,
     requestPermissions,
     registerForPushNotifications,
     scheduleLocalNotification,

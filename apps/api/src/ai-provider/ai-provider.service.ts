@@ -1,27 +1,70 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { AIProvider } from '@prisma/client';
+import { IsBoolean, IsEnum, IsInt, IsNotEmpty, IsOptional, IsString, Max, Min } from 'class-validator';
 import { generateText } from 'ai';
 import { createOpenAI, openai } from '@ai-sdk/openai';
 import { anthropic } from '@ai-sdk/anthropic';
 import { google } from '@ai-sdk/google';
 import { PrismaService } from '../prisma/prisma.service';
 
-export interface CreateAIProviderDto {
-    provider: AIProvider;
-    apiKey: string;
-    modelName: string;
-    displayName: string;
+export class CreateAIProviderDto {
+    @IsEnum(AIProvider, { message: 'Geçersiz AI sağlayıcı' })
+    provider!: AIProvider;
+
+    @IsString()
+    @IsNotEmpty({ message: 'API anahtarı gereklidir' })
+    apiKey!: string;
+
+    @IsString()
+    @IsNotEmpty({ message: 'Model adı gereklidir' })
+    modelName!: string;
+
+    @IsString()
+    @IsNotEmpty({ message: 'Görünen ad gereklidir' })
+    displayName!: string;
+
+    @IsOptional()
+    @IsString()
     description?: string;
+
+    @IsOptional()
+    @IsInt()
+    @Min(0)
+    @Max(1000)
     priority?: number;
+
+    @IsOptional()
+    @IsBoolean()
     isActive?: boolean;
 }
 
-export interface UpdateAIProviderDto {
+export class UpdateAIProviderDto {
+    @IsOptional()
+    @IsString()
     apiKey?: string;
+
+    @IsOptional()
+    @IsString()
+    @IsNotEmpty({ message: 'Model adı boş olamaz' })
     modelName?: string;
+
+    @IsOptional()
+    @IsString()
+    @IsNotEmpty({ message: 'Görünen ad boş olamaz' })
     displayName?: string;
+
+    @IsOptional()
+    @IsString()
     description?: string;
+
+    @IsOptional()
+    @IsBoolean()
     isActive?: boolean;
+
+    @IsOptional()
+    @IsInt()
+    @Min(0)
+    @Max(1000)
     priority?: number;
 }
 
@@ -137,7 +180,60 @@ export class AIProviderService {
         });
     }
 
-    async testConnection(provider: AIProvider) {
+    async getRuntimeStatus() {
+        const [providers, policies] = await Promise.all([
+            this.prisma.aIProviderConfig.findMany({ orderBy: { priority: 'desc' } }),
+            this.prisma.modelPolicy.findMany({ orderBy: { updatedAt: 'desc' } }),
+        ]);
+
+        const activeFallback = providers.find((p) => p.isActive) || null;
+        const resolvePlan = (plan: 'free' | 'premium') => {
+            const policy = policies.find((p) => p.plan === plan) || null;
+            if (policy) {
+                const matchedProvider = providers.find(
+                    (p) => p.provider === policy.provider && p.isActive,
+                );
+                if (matchedProvider) {
+                    return {
+                        plan,
+                        source: 'model_policy',
+                        provider: policy.provider,
+                        modelName: policy.modelName,
+                        temperature: policy.temperature,
+                        maxTokens: policy.maxTokens,
+                        warning: null,
+                    };
+                }
+                return {
+                    plan,
+                    source: activeFallback ? 'active_provider_fallback' : 'env_fallback',
+                    provider: activeFallback?.provider || 'google',
+                    modelName: activeFallback?.modelName || 'gemini-3.8-flash',
+                    temperature: policy.temperature,
+                    maxTokens: policy.maxTokens,
+                    warning: `Model politikası "${policy.provider}/${policy.modelName}" aktif sağlayıcıda bulunamadı; aktif sağlayıcıya düşüldü.`,
+                };
+            }
+            return {
+                plan,
+                source: activeFallback ? 'active_provider' : 'env_fallback',
+                provider: activeFallback?.provider || 'google',
+                modelName: activeFallback?.modelName || 'gemini-3.8-flash',
+                temperature: 0.8,
+                maxTokens: 1024,
+                warning: null,
+            };
+        };
+
+        return {
+            free: resolvePlan('free'),
+            premium: resolvePlan('premium'),
+            activeProvidersCount: providers.filter((p) => p.isActive).length,
+            hasEnvGeminiKey: Boolean(process.env.GOOGLE_GENERATIVE_AI_API_KEY),
+        };
+    }
+
+    async testConnection(provider: AIProvider, customPrompt?: string) {
         const config = await this.getByProvider(provider);
         if (!config) {
             throw new NotFoundException(`AI sağlayıcı bulunamadı: ${provider}`);
@@ -168,8 +264,8 @@ export class AIProviderService {
         try {
             const res = await generateText({
                 model,
-                prompt: 'Reply with OK.',
-                maxOutputTokens: 10,
+                prompt: customPrompt?.trim() || 'Reply with OK.',
+                maxOutputTokens: customPrompt?.trim() ? 120 : 10,
             });
             return {
                 ok: true,

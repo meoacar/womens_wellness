@@ -20,6 +20,13 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(payload: any) {
+    if (payload?.type && payload.type !== 'access') {
+      throw new UnauthorizedException({
+        code: 'INVALID_TOKEN_TYPE',
+        message: 'Geçersiz erişim anahtarı.',
+      });
+    }
+
     const user = await this.prisma.user.findUnique({
       where: { id: payload.sub },
       include: {
@@ -49,6 +56,17 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       });
     }
 
+    if (
+      (user as any).sessionsRevokedAt &&
+      typeof payload?.iat === 'number' &&
+      payload.iat * 1000 < new Date((user as any).sessionsRevokedAt).getTime()
+    ) {
+      throw new UnauthorizedException({
+        code: 'SESSION_REVOKED',
+        message: 'Oturumunuz yönetici tarafından sonlandırıldı. Lütfen tekrar giriş yapın.',
+      });
+    }
+
     // Throttled live-presence heartbeat (max 1 DB write per minute per user)
     const now = Date.now();
     const lastTouch = this.lastSeenTouchMap.get(user.id) || 0;
@@ -57,7 +75,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       this.prisma.user
         .update({
           where: { id: user.id },
-          data: { updatedAt: new Date(now) },
+          data: { updatedAt: new Date(now), lastSeenAt: new Date(now) },
         })
         .catch(() => {});
     }

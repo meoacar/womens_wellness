@@ -6,11 +6,11 @@
     "dev": "next dev -p 3000",
     "build": "next build",
     "start": "next start -p 3000",
-    "lint": "next lint"
+    "lint": "node ../../apps/api/node_modules/eslint/bin/eslint.js --resolve-plugins-relative-to ../../node_modules/.pnpm/node_modules \"src/**/*.{ts,tsx}\""
   },
   "dependencies": {
     "lucide-react": "^0.468.0",
-    "next": "14.0.4",
+    "next": "15.5.29",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   },

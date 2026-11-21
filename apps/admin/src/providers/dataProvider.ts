@@ -103,6 +103,8 @@ export const dataProvider: DataProvider = {
       endpoint = 'cycles/admin/all';
     } else if (resource === 'health/pregnancy') {
       endpoint = 'pregnancy/admin/all';
+    } else if (resource === 'health/postpartum') {
+      endpoint = 'postpartum/admin/all';
     } else if (resource === 'health/wellness') {
       endpoint = 'wellness/v1/admin/overview';
     } else if (resource === 'reminders') {

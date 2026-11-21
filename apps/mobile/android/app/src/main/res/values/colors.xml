@@ -1,0 +1,15 @@
+<resources>
+  <color name="splashscreen_background">#ffffff</color>
+  <color name="iconBackground">#ffffff</color>
+  <color name="colorPrimary">#023c69</color>
+  <color name="colorPrimaryDark">#ffffff</color>
+  <color name="notification_icon_color">#EC4899</color>
+  <color name="notif_text_primary">#18181B</color>
+  <color name="notif_text_secondary">#52525B</color>
+  <color name="notif_progress_bg">#E4E4E7</color>
+  <color name="notif_progress_fill">#F97316</color>
+  <color name="notif_action_bg">#F4F4F5</color>
+  <color name="notif_action_tint">#18181B</color>
+  <color name="notif_cycle_bg">#FCE7F3</color>
+  <color name="notif_cycle_text">#BE185D</color>
+</resources>

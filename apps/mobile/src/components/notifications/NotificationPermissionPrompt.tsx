@@ -1,7 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Alert, Linking, Platform, AppState, AppStateStatus } from 'react-native';
-import * as Notifications from 'expo-notifications';
+import { View, Text, StyleSheet, TouchableOpacity, Alert, AppState, AppStateStatus, Platform } from 'react-native';
 import { useTheme } from '@/hooks/useTheme';
+import {
+    getOsNotificationPermissionStatus,
+    openAppNotificationSettings,
+    requestOsNotificationPermission,
+} from '@/services/notificationEngine';
 
 interface NotificationPermissionPromptProps {
     onPermissionGranted?: () => void;
@@ -38,12 +42,12 @@ export function NotificationPermissionPrompt({
 
     const checkPermissionStatus = async () => {
         try {
-            const { status } = await Notifications.getPermissionsAsync();
-            setPermissionStatus(status as any);
+            const info = await getOsNotificationPermissionStatus();
+            setPermissionStatus(info.status);
 
-            if (status === 'granted') {
+            if (info.granted) {
                 onPermissionGranted?.();
-            } else if (status === 'denied') {
+            } else if (info.status === 'denied') {
                 onPermissionDenied?.();
             }
         } catch (error) {
@@ -54,10 +58,10 @@ export function NotificationPermissionPrompt({
     const requestPermission = async () => {
         setIsLoading(true);
         try {
-            const { status } = await Notifications.requestPermissionsAsync();
-            setPermissionStatus(status as any);
+            const res = await requestOsNotificationPermission({ showSettingsPrompt: false });
+            setPermissionStatus(res.status);
 
-            if (status === 'granted') {
+            if (res.granted) {
                 onPermissionGranted?.();
                 Alert.alert(
                     'Başarılı! 🎉',
@@ -95,11 +99,7 @@ export function NotificationPermissionPrompt({
     };
 
     const openSettings = () => {
-        if (Platform.OS === 'ios') {
-            Linking.openURL('app-settings:');
-        } else {
-            Linking.openSettings();
-        }
+        openAppNotificationSettings();
     };
 
     // Eğer izin verilmişse hiçbir şey gösterme

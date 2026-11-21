@@ -41,6 +41,8 @@ export default function WellnessDataPage() {
     totalDailyLogs: 0,
     totalHealthMetrics: 0,
     activeUsers7d: 0,
+    activePushUsersCount: 0,
+    todayStepUsersCount: 0,
   });
   const [records, setRecords] = useState<{
     steps: any[];
@@ -337,6 +339,24 @@ export default function WellnessDataPage() {
             <Statistic
               title="Son 7 Gün Aktif Kişi"
               value={stats.activeUsers7d}
+              loading={loading}
+            />
+          </Card>
+        </Col>
+        <Col xs={24} sm={12} md={4}>
+          <Card>
+            <Statistic
+              title="Bugün Adım Kaydı"
+              value={stats.todayStepUsersCount}
+              loading={loading}
+            />
+          </Card>
+        </Col>
+        <Col xs={24} sm={12} md={4}>
+          <Card>
+            <Statistic
+              title="Push Bildirimi Aktif"
+              value={stats.activePushUsersCount}
               loading={loading}
             />
           </Card>

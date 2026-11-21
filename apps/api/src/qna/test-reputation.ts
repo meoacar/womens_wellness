@@ -150,7 +150,7 @@ async function getAllBadges(token: string) {
         });
         return response.data;
     } catch (error: any) {
-        console.error('❌ Tüm badge'leri getirme hatası: ', error.response?.data || error.message);
+        console.error('❌ Tüm badge\'leri getirme hatası: ', error.response?.data || error.message);
         throw error;
     }
 }
@@ -213,7 +213,7 @@ async function runTests() {
 
         // 6. İlk badge kontrolü
         console.log('6️⃣  İlk badge kontrol ediliyor...');
-        let badges1 = await getMyBadges(authToken1);
+        const badges1 = await getMyBadges(authToken1);
         console.log(`✅ User 1 badge sayısı: ${badges1.length}`);
         if (badges1.length > 0) {
             console.log('Kazanılan badge\'ler:', badges1.map((b: any) => b.nameTr));

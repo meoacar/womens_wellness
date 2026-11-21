@@ -5,6 +5,12 @@ import { Question, Answer, QuestionComment, AnswerComment, QuestionStatus, Subsc
 import { ReputationService } from './reputation.service';
 import { ModerationService } from './moderation.service';
 import { QnaNotificationService } from './qna-notification.service';
+import {
+    sanitizeQuestionResponse,
+    sanitizeAnswerResponse,
+    sanitizeCommentResponse,
+    sanitizePublicAuthor,
+} from './utils/sanitize-author';
 
 export interface QuestionDetail extends Question {
     user: {
@@ -66,7 +72,7 @@ export class QnaService {
 
     // ==================== QUESTIONS ====================
 
-    async createQuestion(userId: string, dto: CreateQuestionDto): Promise<Question> {
+    async createQuestion(userId: string, dto: CreateQuestionDto): Promise<any> {
         try {
             // Spam kontrolü
             const isSpam = this.moderationService.checkSpam(dto.title + ' ' + dto.content);
@@ -111,7 +117,7 @@ export class QnaService {
             }
 
             this.logger.log(`Question created: ${question.id} by user ${userId} (premium: ${isPremium})`);
-            return question;
+            return sanitizeQuestionResponse(question, userId);
         } catch (error) {
             if (error instanceof BadRequestException) {
                 throw error;
@@ -234,24 +240,11 @@ export class QnaService {
                 followMap = new Map(follows.map(f => [f.questionId, true]));
             }
 
-            const questionsWithInteractions = questions.map(q => {
-                const displayName = q.user?.profile?.firstName && q.user?.profile?.lastName
-                    ? `${q.user.profile.firstName} ${q.user.profile.lastName}`
-                    : q.user?.username || 'Anonim Kullanıcı';
-
-                return {
-                    ...q,
-                    user: q.user ? {
-                        id: q.user.id,
-                        username: q.user.username,
-                        displayName,
-                        profilePictureUrl: q.user.profile?.profilePictureUrl,
-                        reputation: q.user.reputation?.totalPoints ?? 0,
-                    } : undefined,
-                    isFavorited: favoriteMap.get(q.id) || false,
-                    isFollowing: followMap.get(q.id) || false,
-                };
-            });
+            const questionsWithInteractions = questions.map(q => ({
+                ...sanitizeQuestionResponse(q, userId),
+                isFavorited: favoriteMap.get(q.id) || false,
+                isFollowing: followMap.get(q.id) || false,
+            }));
 
             return {
                 questions: questionsWithInteractions,
@@ -275,7 +268,6 @@ export class QnaService {
                         select: {
                             id: true,
                             username: true,
-                            email: true,
                             profile: {
                                 select: {
                                     firstName: true,
@@ -301,7 +293,6 @@ export class QnaService {
                                 select: {
                                     id: true,
                                     username: true,
-                                    email: true,
                                     profile: {
                                         select: {
                                             firstName: true,
@@ -334,34 +325,7 @@ export class QnaService {
                 data: { viewCount: { increment: 1 } },
             });
 
-            // Transform user data
-            const displayName = question.user?.profile?.firstName && question.user?.profile?.lastName
-                ? `${question.user.profile.firstName} ${question.user.profile.lastName}`
-                : question.user?.username || 'Anonim Kullanıcı';
-
-            const transformedQuestion = {
-                ...question,
-                user: question.user ? {
-                    id: question.user.id,
-                    username: question.user.username,
-                    email: question.user.email,
-                    displayName,
-                    profilePictureUrl: question.user.profile?.profilePictureUrl,
-                    reputation: question.user.reputation?.totalPoints ?? 0,
-                } : undefined,
-                answers: (question.answers || []).map((a) => ({
-                    ...a,
-                    user: a.user ? {
-                        id: a.user.id,
-                        username: a.user.username,
-                        email: a.user.email,
-                        displayName: a.user.profile?.firstName && a.user.profile?.lastName
-                            ? `${a.user.profile.firstName} ${a.user.profile.lastName}`
-                            : a.user.username || 'Anonim Kullanıcı',
-                        profilePictureUrl: a.user.profile?.profilePictureUrl,
-                    } : undefined,
-                })),
-            };
+            const transformedQuestion = sanitizeQuestionResponse(question, userId);
 
             // Get user interactions if userId provided
             if (userId) {
@@ -425,7 +389,7 @@ export class QnaService {
             });
 
             this.logger.log(`Question updated: ${id} by user ${userId}`);
-            return updated;
+            return sanitizeQuestionResponse(updated, userId) as Question;
         } catch (error) {
             if (error instanceof NotFoundException || error instanceof ForbiddenException) {
                 throw error;
@@ -626,7 +590,6 @@ export class QnaService {
                         select: {
                             id: true,
                             username: true,
-                            email: true,
                             profile: {
                                 select: {
                                     firstName: true,
@@ -667,19 +630,11 @@ export class QnaService {
 
             this.logger.log(`Answer created: ${answer.id} for question ${questionId} by user ${userId}`);
 
-            // Transform user data
-            const displayName = answer.user?.profile?.firstName && answer.user?.profile?.lastName
-                ? `${answer.user.profile.firstName} ${answer.user.profile.lastName}`
-                : answer.user?.username || 'Anonim Kullanıcı';
-
             return {
-                ...answer,
-                user: answer.user ? {
-                    id: answer.user.id,
-                    username: answer.user.username,
-                    displayName,
-                    profilePictureUrl: answer.user.profile?.profilePictureUrl,
-                } : undefined,
+                ...sanitizeAnswerResponse(answer, userId, {
+                    isAnonymousQuestion: question.isAnonymous,
+                    questionOwnerId: question.userId,
+                }),
                 userVote: null,
             };
         } catch (error) {
@@ -702,13 +657,14 @@ export class QnaService {
                         select: {
                             id: true,
                             title: true,
+                            isAnonymous: true,
+                            userId: true,
                         },
                     },
                     user: {
                         select: {
                             id: true,
                             username: true,
-                            email: true,
                             profile: {
                                 select: {
                                     firstName: true,
@@ -726,23 +682,7 @@ export class QnaService {
                 },
             });
 
-            // Transform answers to include proper user data
-            return answers.map(a => {
-                const displayName = a.user?.profile?.firstName && a.user?.profile?.lastName
-                    ? `${a.user.profile.firstName} ${a.user.profile.lastName}`
-                    : a.user?.username || 'Anonim Kullanıcı';
-
-                return {
-                    ...a,
-                    user: a.user ? {
-                        id: a.user.id,
-                        username: a.user.username,
-                        email: a.user.email,
-                        displayName,
-                        profilePictureUrl: a.user.profile?.profilePictureUrl,
-                    } : undefined,
-                };
-            });
+            return answers.map(a => sanitizeAnswerResponse(a, userId));
         } catch (error) {
             this.logger.error('Error fetching all answers:', error);
             throw error;
@@ -758,13 +698,14 @@ export class QnaService {
                         select: {
                             id: true,
                             title: true,
+                            isAnonymous: true,
+                            userId: true,
                         },
                     },
                     user: {
                         select: {
                             id: true,
                             username: true,
-                            email: true,
                             profile: {
                                 select: {
                                     firstName: true,
@@ -786,21 +727,7 @@ export class QnaService {
                 throw new NotFoundException('Cevap bulunamadı');
             }
 
-            // Transform user data
-            const displayName = answer.user?.profile?.firstName && answer.user?.profile?.lastName
-                ? `${answer.user.profile.firstName} ${answer.user.profile.lastName}`
-                : answer.user?.username || 'Anonim Kullanıcı';
-
-            return {
-                ...answer,
-                user: answer.user ? {
-                    id: answer.user.id,
-                    username: answer.user.username,
-                    email: answer.user.email,
-                    displayName,
-                    profilePictureUrl: answer.user.profile?.profilePictureUrl,
-                } : undefined,
-            };
+            return sanitizeAnswerResponse(answer, userId);
         } catch (error) {
             if (error instanceof NotFoundException) {
                 throw error;
@@ -812,40 +739,45 @@ export class QnaService {
 
     async getAnswers(questionId: string, userId?: string): Promise<any[]> {
         try {
-            const answers = await this.prisma.answer.findMany({
-                where: { questionId },
-                orderBy: [
-                    { isBestAnswer: 'desc' },
-                    { voteCount: 'desc' },
-                    { createdAt: 'asc' },
-                ],
-                include: {
-                    user: {
-                        select: {
-                            id: true,
-                            username: true,
-                            email: true,
-                            profile: {
-                                select: {
-                                    firstName: true,
-                                    lastName: true,
-                                    profilePictureUrl: true,
+            const [question, answers] = await Promise.all([
+                this.prisma.question.findUnique({
+                    where: { id: questionId },
+                    select: { isAnonymous: true, userId: true },
+                }),
+                this.prisma.answer.findMany({
+                    where: { questionId },
+                    orderBy: [
+                        { isBestAnswer: 'desc' },
+                        { voteCount: 'desc' },
+                        { createdAt: 'asc' },
+                    ],
+                    include: {
+                        user: {
+                            select: {
+                                id: true,
+                                username: true,
+                                profile: {
+                                    select: {
+                                        firstName: true,
+                                        lastName: true,
+                                        profilePictureUrl: true,
+                                    },
                                 },
-                            },
-                            reputation: {
-                                select: {
-                                    totalPoints: true,
+                                reputation: {
+                                    select: {
+                                        totalPoints: true,
+                                    },
                                 },
                             },
                         },
-                    },
-                    _count: {
-                        select: {
-                            comments: true,
+                        _count: {
+                            select: {
+                                comments: true,
+                            },
                         },
                     },
-                },
-            });
+                }),
+            ]);
 
             // Get user votes if userId provided
             let voteMap = new Map();
@@ -860,23 +792,13 @@ export class QnaService {
                 voteMap = new Map(votes.map(v => [v.answerId, v.voteType]));
             }
 
-            // Transform answers to include proper user data
-            return answers.map(a => {
-                const displayName = a.user?.profile?.firstName && a.user?.profile?.lastName
-                    ? `${a.user.profile.firstName} ${a.user.profile.lastName}`
-                    : a.user?.username || 'Anonim Kullanıcı';
-
-                return {
-                    ...a,
-                    user: a.user ? {
-                        id: a.user.id,
-                        username: a.user.username,
-                        displayName,
-                        profilePictureUrl: a.user.profile?.profilePictureUrl,
-                    } : undefined,
-                    userVote: voteMap.get(a.id) || null,
-                };
-            });
+            return answers.map(a => ({
+                ...sanitizeAnswerResponse(a, userId, {
+                    isAnonymousQuestion: question?.isAnonymous,
+                    questionOwnerId: question?.userId,
+                }),
+                userVote: voteMap.get(a.id) || null,
+            }));
         } catch (error) {
             this.logger.error(`Error fetching answers for question ${questionId}:`, error);
             throw error;
@@ -1100,20 +1022,10 @@ export class QnaService {
 
             this.logger.log(`Question comment created: ${comment.id} for question ${questionId}`);
 
-            // Transform user data
-            const displayName = comment.user?.profile?.firstName && comment.user?.profile?.lastName
-                ? `${comment.user.profile.firstName} ${comment.user.profile.lastName}`
-                : comment.user?.username || 'Anonim Kullanıcı';
-
-            return {
-                ...comment,
-                user: comment.user ? {
-                    id: comment.user.id,
-                    username: comment.user.username,
-                    displayName,
-                    profilePictureUrl: comment.user.profile?.profilePictureUrl,
-                } : undefined,
-            };
+            return sanitizeCommentResponse(comment, userId, {
+                isAnonymousQuestion: question.isAnonymous,
+                questionOwnerId: question.userId,
+            });
         } catch (error) {
             if (error instanceof NotFoundException) {
                 throw error;
@@ -1133,6 +1045,11 @@ export class QnaService {
 
             const answer = await this.prisma.answer.findUnique({
                 where: { id: answerId },
+                include: {
+                    question: {
+                        select: { isAnonymous: true, userId: true },
+                    },
+                },
             });
 
             if (!answer) {
@@ -1169,20 +1086,10 @@ export class QnaService {
 
             this.logger.log(`Answer comment created: ${comment.id} for answer ${answerId}`);
 
-            // Transform user data
-            const displayName = comment.user?.profile?.firstName && comment.user?.profile?.lastName
-                ? `${comment.user.profile.firstName} ${comment.user.profile.lastName}`
-                : comment.user?.username || 'Anonim Kullanıcı';
-
-            return {
-                ...comment,
-                user: comment.user ? {
-                    id: comment.user.id,
-                    username: comment.user.username,
-                    displayName,
-                    profilePictureUrl: comment.user.profile?.profilePictureUrl,
-                } : undefined,
-            };
+            return sanitizeCommentResponse(comment, userId, {
+                isAnonymousQuestion: answer.question?.isAnonymous,
+                questionOwnerId: answer.question?.userId,
+            });
         } catch (error) {
             if (error instanceof NotFoundException) {
                 throw error;
@@ -1192,88 +1099,84 @@ export class QnaService {
         }
     }
 
-    async getQuestionComments(questionId: string): Promise<any[]> {
+    async getQuestionComments(questionId: string, viewerUserId?: string): Promise<any[]> {
         try {
-            const comments = await this.prisma.questionComment.findMany({
-                where: { questionId },
-                orderBy: { createdAt: 'asc' },
-                include: {
-                    user: {
-                        select: {
-                            id: true,
-                            username: true,
-                            profile: {
-                                select: {
-                                    firstName: true,
-                                    lastName: true,
-                                    profilePictureUrl: true,
+            const [question, comments] = await Promise.all([
+                this.prisma.question.findUnique({
+                    where: { id: questionId },
+                    select: { isAnonymous: true, userId: true },
+                }),
+                this.prisma.questionComment.findMany({
+                    where: { questionId },
+                    orderBy: { createdAt: 'asc' },
+                    include: {
+                        user: {
+                            select: {
+                                id: true,
+                                username: true,
+                                profile: {
+                                    select: {
+                                        firstName: true,
+                                        lastName: true,
+                                        profilePictureUrl: true,
+                                    },
                                 },
                             },
                         },
                     },
-                },
-            });
+                }),
+            ]);
 
-            // Transform user data
-            return comments.map(c => {
-                const displayName = c.user?.profile?.firstName && c.user?.profile?.lastName
-                    ? `${c.user.profile.firstName} ${c.user.profile.lastName}`
-                    : c.user?.username || 'Anonim Kullanıcı';
-
-                return {
-                    ...c,
-                    user: c.user ? {
-                        id: c.user.id,
-                        username: c.user.username,
-                        displayName,
-                        profilePictureUrl: c.user.profile?.profilePictureUrl,
-                    } : undefined,
-                };
-            });
+            return comments.map(c =>
+                sanitizeCommentResponse(c, viewerUserId, {
+                    isAnonymousQuestion: question?.isAnonymous,
+                    questionOwnerId: question?.userId,
+                }),
+            );
         } catch (error) {
             this.logger.error(`Error fetching question comments:`, error);
             throw error;
         }
     }
 
-    async getAnswerComments(answerId: string): Promise<any[]> {
+    async getAnswerComments(answerId: string, viewerUserId?: string): Promise<any[]> {
         try {
-            const comments = await this.prisma.answerComment.findMany({
-                where: { answerId },
-                orderBy: { createdAt: 'asc' },
-                include: {
-                    user: {
-                        select: {
-                            id: true,
-                            username: true,
-                            profile: {
-                                select: {
-                                    firstName: true,
-                                    lastName: true,
-                                    profilePictureUrl: true,
+            const [answer, comments] = await Promise.all([
+                this.prisma.answer.findUnique({
+                    where: { id: answerId },
+                    include: {
+                        question: {
+                            select: { isAnonymous: true, userId: true },
+                        },
+                    },
+                }),
+                this.prisma.answerComment.findMany({
+                    where: { answerId },
+                    orderBy: { createdAt: 'asc' },
+                    include: {
+                        user: {
+                            select: {
+                                id: true,
+                                username: true,
+                                profile: {
+                                    select: {
+                                        firstName: true,
+                                        lastName: true,
+                                        profilePictureUrl: true,
+                                    },
                                 },
                             },
                         },
                     },
-                },
-            });
+                }),
+            ]);
 
-            // Transform user data
-            return comments.map(c => {
-                const displayName = c.user?.profile?.firstName && c.user?.profile?.lastName
-                    ? `${c.user.profile.firstName} ${c.user.profile.lastName}`
-                    : c.user?.username || 'Anonim Kullanıcı';
-
-                return {
-                    ...c,
-                    user: c.user ? {
-                        id: c.user.id,
-                        username: c.user.username,
-                        displayName,
-                        profilePictureUrl: c.user.profile?.profilePictureUrl,
-                    } : undefined,
-                };
-            });
+            return comments.map(c =>
+                sanitizeCommentResponse(c, viewerUserId, {
+                    isAnonymousQuestion: answer?.question?.isAnonymous,
+                    questionOwnerId: answer?.question?.userId,
+                }),
+            );
         } catch (error) {
             this.logger.error(`Error fetching answer comments:`, error);
             throw error;
@@ -1338,7 +1241,7 @@ export class QnaService {
 
     // ==================== USER QUESTIONS ====================
 
-    async getMyQuestions(userId: string, filters: QuestionFiltersDto): Promise<PaginatedQuestions> {
+    async getMyQuestions(userId: string, filters: QuestionFiltersDto): Promise<any> {
         try {
             const { category, tags, status, sort, search, page = 1, limit = 20 } = filters;
             const skip = (page - 1) * limit;
@@ -1396,7 +1299,6 @@ export class QnaService {
                         select: {
                             id: true,
                             username: true,
-                            email: true,
                             profile: {
                                 select: {
                                     firstName: true,
@@ -1422,7 +1324,6 @@ export class QnaService {
                                 select: {
                                     id: true,
                                     username: true,
-                                    email: true,
                                     profile: {
                                         select: {
                                             firstName: true,
@@ -1464,7 +1365,7 @@ export class QnaService {
             const followMap = new Map(follows.map(f => [f.questionId, true]));
 
             const questionsWithInteractions = questions.map(q => ({
-                ...q,
+                ...sanitizeQuestionResponse(q, userId),
                 isFavorited: favoriteMap.get(q.id) || false,
                 isFollowing: followMap.get(q.id) || false,
             }));
@@ -1482,7 +1383,7 @@ export class QnaService {
         }
     }
 
-    async getFavoriteQuestions(userId: string, filters: QuestionFiltersDto): Promise<PaginatedQuestions> {
+    async getFavoriteQuestions(userId: string, filters: QuestionFiltersDto): Promise<any> {
         try {
             const { category, tags, status, sort, search, page = 1, limit = 20 } = filters;
             const skip = (page - 1) * limit;
@@ -1564,7 +1465,6 @@ export class QnaService {
                         select: {
                             id: true,
                             username: true,
-                            email: true,
                             profile: {
                                 select: {
                                     firstName: true,
@@ -1590,7 +1490,6 @@ export class QnaService {
                                 select: {
                                     id: true,
                                     username: true,
-                                    email: true,
                                     profile: {
                                         select: {
                                             firstName: true,
@@ -1624,7 +1523,7 @@ export class QnaService {
             const followMap = new Map(follows.map(f => [f.questionId, true]));
 
             const questionsWithInteractions = questions.map(q => ({
-                ...q,
+                ...sanitizeQuestionResponse(q, userId),
                 isFavorited: true, // All questions in this list are favorited
                 isFollowing: followMap.get(q.id) || false,
             }));
@@ -1642,7 +1541,7 @@ export class QnaService {
         }
     }
 
-    async getFollowingQuestions(userId: string, filters: QuestionFiltersDto): Promise<PaginatedQuestions> {
+    async getFollowingQuestions(userId: string, filters: QuestionFiltersDto): Promise<any> {
         try {
             const { category, tags, status, sort, search, page = 1, limit = 20 } = filters;
             const skip = (page - 1) * limit;
@@ -1724,7 +1623,6 @@ export class QnaService {
                         select: {
                             id: true,
                             username: true,
-                            email: true,
                             profile: {
                                 select: {
                                     firstName: true,
@@ -1750,7 +1648,6 @@ export class QnaService {
                                 select: {
                                     id: true,
                                     username: true,
-                                    email: true,
                                     profile: {
                                         select: {
                                             firstName: true,
@@ -1784,7 +1681,7 @@ export class QnaService {
             const favoriteMap = new Map(favorites.map(f => [f.questionId, true]));
 
             const questionsWithInteractions = questions.map(q => ({
-                ...q,
+                ...sanitizeQuestionResponse(q, userId),
                 isFavorited: favoriteMap.get(q.id) || false,
                 isFollowing: true, // All questions in this list are followed
             }));
@@ -2003,7 +1900,6 @@ export class QnaService {
                         select: {
                             id: true,
                             username: true,
-                            email: true,
                             profile: {
                                 select: {
                                     firstName: true,
@@ -2018,7 +1914,7 @@ export class QnaService {
             });
 
             return followers.map(f => ({
-                ...f.follower,
+                ...sanitizePublicAuthor(f.follower),
                 followedAt: f.createdAt,
             }));
         } catch (error) {
@@ -2036,7 +1932,6 @@ export class QnaService {
                         select: {
                             id: true,
                             username: true,
-                            email: true,
                             profile: {
                                 select: {
                                     firstName: true,
@@ -2051,7 +1946,7 @@ export class QnaService {
             });
 
             return following.map(f => ({
-                ...f.following,
+                ...sanitizePublicAuthor(f.following),
                 followedAt: f.createdAt,
             }));
         } catch (error) {

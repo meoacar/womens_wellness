@@ -71,7 +71,12 @@ export class ChatService {
     });
   }
 
-  async streamResponse(userId: string, conversationId: string, userMessage: string) {
+  async streamResponse(
+    userId: string,
+    conversationId: string,
+    userMessage: string,
+    options?: { overrideGoogleModel?: string; abortSignal?: AbortSignal },
+  ) {
     // Build user context with health data
     const userContext = await this.contextBuilder.buildUserContext(userId);
     const systemPrompt = this.contextBuilder.buildSystemPrompt(userContext);
@@ -104,10 +109,25 @@ export class ChatService {
     const modelPolicy = await this.modelPolicyService.findByPlan(userPlan);
 
     let model;
+    let activeModelName = '';
+    let activeProvider = '';
     let temperature = 0.8;
-    let maxTokens = 1024;
+    let maxTokens = 4096;
 
-    if (modelPolicy) {
+    if (options?.overrideGoogleModel) {
+      const googleCfg = await this.aiProviderService.getByProvider('google' as AIProvider);
+      const apiKey = googleCfg?.apiKey || process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+      if (!apiKey) {
+        throw new Error('No Google AI API key configured for fallback');
+      }
+      process.env.GOOGLE_GENERATIVE_AI_API_KEY = apiKey;
+      model = google(options.overrideGoogleModel);
+      activeProvider = 'google';
+      activeModelName = options.overrideGoogleModel;
+      temperature = modelPolicy?.temperature ?? 0.8;
+      maxTokens = modelPolicy?.maxTokens ?? 4096;
+      this.logger.warn(`Using fallback Google model: ${options.overrideGoogleModel}`);
+    } else if (modelPolicy) {
       // Use model policy configuration with automatic active/env fallback
       this.logger.log(`Using model policy: ${modelPolicy.provider}/${modelPolicy.modelName}`);
 
@@ -118,6 +138,8 @@ export class ChatService {
           modelPolicy.modelName,
           providerConfig.apiKey
         );
+        activeProvider = String(modelPolicy.provider);
+        activeModelName = modelPolicy.modelName;
         temperature = modelPolicy.temperature;
         maxTokens = modelPolicy.maxTokens;
       } else {
@@ -134,6 +156,8 @@ export class ChatService {
       if (providerConfig) {
         this.logger.log(`✅ Using active fallback provider: ${providerConfig.provider}, model: ${providerConfig.modelName}`);
         model = this.getModelFromConfig(providerConfig.provider, providerConfig.modelName, providerConfig.apiKey);
+        activeProvider = String(providerConfig.provider);
+        activeModelName = providerConfig.modelName;
       } else {
         // Final fallback to environment variable
         this.logger.warn('No active provider in database, falling back to env variable');
@@ -142,9 +166,18 @@ export class ChatService {
           throw new Error('No AI provider configured');
         }
         process.env.GOOGLE_GENERATIVE_AI_API_KEY = apiKey;
-        model = google('gemini-2.5-flash');
+        activeProvider = 'google';
+        activeModelName = 'gemini-3-flash-preview';
+        model = google(activeModelName);
       }
     }
+
+    // Gemini 2.5 / 3.x thinking models count internal reasoning tokens inside maxOutputTokens,
+    // so a 1024-token cap can truncate visible Turkish replies mid-sentence.
+    const isThinkingGemini =
+      activeProvider === 'google' &&
+      (activeModelName.includes('gemini-2.5') || activeModelName.includes('gemini-3'));
+    const effectiveMaxTokens = isThinkingGemini ? Math.max(maxTokens, 4096) : maxTokens;
 
     // Stream the response with system prompt as separate parameter
     const result = streamText({
@@ -152,7 +185,8 @@ export class ChatService {
       system: systemPrompt,
       messages,
       temperature,
-      maxOutputTokens: maxTokens,
+      maxOutputTokens: effectiveMaxTokens,
+      abortSignal: options?.abortSignal,
     });
 
     return result;

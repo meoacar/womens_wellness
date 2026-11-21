@@ -57,6 +57,9 @@ class SearchUsersDto {
     @IsString()
     search?: string;
     @IsOptional()
+    @IsString()
+    lifeStage?: string;
+    @IsOptional()
     status?: UserStatus;
     @IsOptional()
     subscriptionStatus?: SubscriptionStatus;
@@ -205,6 +208,25 @@ export class AdminController {
         @Body() body: { title: string; body: string },
     ) {
         return this.adminService.sendDirectPushToUser(userId, body.title, body.body);
+    }
+
+    @Post('users/:userId/sessions/revoke-all')
+    @ApiOperation({ summary: 'Revoke all JWT sessions for user (Admin)' })
+    async revokeAllUserSessions(
+        @CurrentUser() admin: any,
+        @Param('userId') userId: string,
+    ) {
+        return this.adminService.revokeAllUserSessions(admin.id, userId);
+    }
+
+    @Post('users/:userId/sessions/:familyId/revoke')
+    @ApiOperation({ summary: 'Revoke a single JWT session family for user (Admin)' })
+    async revokeUserSessionFamily(
+        @CurrentUser() admin: any,
+        @Param('userId') userId: string,
+        @Param('familyId') familyId: string,
+    ) {
+        return this.adminService.revokeUserSessionFamily(admin.id, userId, familyId);
     }
 
     @Get('retention/funnel')

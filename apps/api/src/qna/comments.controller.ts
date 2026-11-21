@@ -40,11 +40,11 @@ export class CommentsController {
     }
 
     @Get('questions/:id/comments')
-    async getQuestionComments(@Param('id') id: string) {
+    async getQuestionComments(@Request() req, @Param('id') id: string) {
         if (!id || id.length < 10) {
             throw new BadRequestException('Geçersiz soru ID');
         }
-        return this.qnaService.getQuestionComments(id);
+        return this.qnaService.getQuestionComments(id, req.user?.id);
     }
 
     @Post('answers/:id/comments')
@@ -63,11 +63,11 @@ export class CommentsController {
     }
 
     @Get('answers/:id/comments')
-    async getAnswerComments(@Param('id') id: string) {
+    async getAnswerComments(@Request() req, @Param('id') id: string) {
         if (!id || id.length < 10) {
             throw new BadRequestException('Geçersiz cevap ID');
         }
-        return this.qnaService.getAnswerComments(id);
+        return this.qnaService.getAnswerComments(id, req.user?.id);
     }
 
     @Delete('comments/question/:id')

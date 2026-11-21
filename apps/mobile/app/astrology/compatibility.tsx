@@ -37,7 +37,7 @@ export default function CompatibilityScreen() {
     const { user } = useAuthStore();
 
     const defaultUserSign = user?.profile?.dateOfBirth
-        ? getZodiacSign(new Date(user.profile.dateOfBirth))
+        ? getZodiacSign(user.profile.dateOfBirth)
         : 'libra';
 
     const [sign1, setSign1] = useState<ZodiacSign>(defaultUserSign);

@@ -16,8 +16,14 @@ import { useRouter } from 'expo-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTheme } from '@/hooks/useTheme';
 import { wellnessService } from '@/services/api';
+import {
+  MEDITATION_TRACKS,
+  meditationAudioService,
+  type MeditationTrackId,
+} from '@/services/meditationAudio';
 import { useAuthStore } from '@/store/authStore';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 
 export default function MeditationScreen() {
   const theme = useTheme();
@@ -36,8 +42,41 @@ export default function MeditationScreen() {
   const [sessionType, setSessionType] = useState<'breath' | 'guided' | 'custom'>('breath');
   const [breathingPresetTitle, setBreathingPresetTitle] = useState<string | null>(null);
   const [breathingMode, setBreathingMode] = useState<boolean>(false);
+  const [selectedTrack, setSelectedTrack] = useState<MeditationTrackId>('432hz');
+  const [isMusicPlaying, setIsMusicPlaying] = useState<boolean>(false);
+  const [musicVolume, setMusicVolume] = useState<number>(0.65);
+  const [autoPlayMusicInTimer, setAutoPlayMusicInTimer] = useState<boolean>(true);
   const breathAnim = useRef(new Animated.Value(0.85)).current;
   const timerIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      meditationAudioService.stop();
+    };
+  }, []);
+
+  const handleToggleTrack = (trackId: MeditationTrackId) => {
+    if (isMusicPlaying && selectedTrack === trackId) {
+      meditationAudioService.stop();
+      setIsMusicPlaying(false);
+      return;
+    }
+    setSelectedTrack(trackId);
+    meditationAudioService.play(trackId, musicVolume);
+    setIsMusicPlaying(true);
+  };
+
+  const handleVolumeChange = (vol: number) => {
+    setMusicVolume(vol);
+    if (isMusicPlaying) {
+      meditationAudioService.setVolume(vol);
+    }
+  };
+
+  const handleStopMusic = () => {
+    meditationAudioService.stop();
+    setIsMusicPlaying(false);
+  };
 
   const styles = createStyles(theme);
 
@@ -112,6 +151,8 @@ export default function MeditationScreen() {
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['meditation'] });
       await queryClient.invalidateQueries({ queryKey: ['homeSnapshot'] });
+      await queryClient.invalidateQueries({ queryKey: ['dailyTasks'] });
+      await queryClient.invalidateQueries({ queryKey: ['gamification'] });
       await refetch();
     },
     onError: (error: any) => {
@@ -161,6 +202,8 @@ export default function MeditationScreen() {
 
   const handleTimerComplete = () => {
     setIsTimerRunning(false);
+    meditationAudioService.stop();
+    setIsMusicPlaying(false);
     Vibration.vibrate([0, 200, 100, 200]); // Haptic feedback
 
     const durationMin = Math.ceil(selectedDuration / 60);
@@ -227,18 +270,32 @@ export default function MeditationScreen() {
     setTimerSeconds(0);
     setIsTimerRunning(true);
     setTimerModalVisible(true);
+    if (autoPlayMusicInTimer) {
+      meditationAudioService.play(selectedTrack, musicVolume);
+      setIsMusicPlaying(true);
+    }
   };
 
   const pauseTimer = () => {
     setIsTimerRunning(false);
+    if (isMusicPlaying) {
+      meditationAudioService.stop();
+      setIsMusicPlaying(false);
+    }
   };
 
   const resumeTimer = () => {
     setIsTimerRunning(true);
+    if (autoPlayMusicInTimer) {
+      meditationAudioService.play(selectedTrack, musicVolume);
+      setIsMusicPlaying(true);
+    }
   };
 
   const stopTimer = () => {
     setIsTimerRunning(false);
+    meditationAudioService.stop();
+    setIsMusicPlaying(false);
     setTimerModalVisible(false);
     resetTimer();
   };
@@ -360,7 +417,7 @@ export default function MeditationScreen() {
 
   if (isLoading && !sessions && !preferences) {
     return (
-      <SafeAreaView style={styles.safeArea} edges={['top']}>
+      <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
         <View style={styles.loadingContainer}>
           <Text style={styles.loadingText}>Yükleniyor...</Text>
         </View>
@@ -369,19 +426,21 @@ export default function MeditationScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={['top']}>
-      {/* Header */}
+    <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
+      {/* Modern Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-          <Text style={styles.backButtonText}>Geri</Text>
+        <TouchableOpacity onPress={() => router.back()} style={styles.headerCircleBtn}>
+          <Ionicons name="chevron-back" size={20} color={theme.colors.text} />
         </TouchableOpacity>
         <View style={styles.headerTitleContainer}>
-          <Text style={styles.headerTitle}>Meditasyon</Text>
+          <Text style={styles.headerTitle}>Meditasyon & Nefes</Text>
           <Text style={styles.headerSubtitle}>
             {new Date().toLocaleDateString('tr-TR', { day: 'numeric', month: 'long' })}
           </Text>
         </View>
-        <View style={styles.headerRight} />
+        <TouchableOpacity onPress={() => setGoalModalVisible(true)} style={styles.headerCircleBtn}>
+          <Ionicons name="options-outline" size={19} color="#8B5CF6" />
+        </TouchableOpacity>
       </View>
 
       <ScrollView
@@ -389,50 +448,69 @@ export default function MeditationScreen() {
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={theme.colors.primary} />
+          <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor="#8B5CF6" />
         }
       >
-        {/* Today Card */}
-        <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <Text style={styles.cardTitle}>Bugün</Text>
-            {stats.today >= goal && (
-              <View style={[styles.chip, styles.chipSuccess]}>
-                <Text style={styles.chipText}>✓ Tebrikler!</Text>
-              </View>
-            )}
-          </View>
-
-          <View style={styles.metricContainer}>
-            <Text style={styles.metricValue}>{stats.today}</Text>
-            <Text style={styles.metricUnit}>dakika</Text>
-          </View>
-
-          <Text style={styles.sessionsText}>{stats.todaySessions} seans</Text>
-
-          <View style={styles.progressBarContainer}>
-            <View style={styles.progressBarBackground}>
-              <View
-                style={[
-                  styles.progressBarFill,
-                  { width: `${Math.min(percentage, 100)}%` },
-                ]}
-              />
+        {/* Serene Plum-Lavender Gradient Hero Card */}
+        <LinearGradient
+          colors={['#6D28D9', '#8B5CF6', '#EC4899']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.heroCard}
+        >
+          <View style={styles.heroTopRow}>
+            <View style={styles.heroBadge}>
+              <Ionicons name="sparkles" size={14} color="#FFFFFF" />
+              <Text style={styles.heroBadgeText}>ZİHİN & NEFES DENGESİ</Text>
             </View>
-            <Text style={styles.progressText}>
-              {percentage}% · Hedef {goal} dk
-            </Text>
+            <View style={styles.heroPctPill}>
+              <Text style={styles.heroPctText}>
+                {stats.today >= goal ? '✓ Hedef Tamam' : `%${percentage}`}
+              </Text>
+            </View>
           </View>
 
-          <View style={styles.actions}>
+          <View style={styles.heroMetricRow}>
+            <Text style={styles.heroMetricValue}>{stats.today}</Text>
+            <Text style={styles.heroMetricUnit}>dk bugün</Text>
+          </View>
+
+          <Text style={styles.heroGoalSub}>
+            {stats.todaySessions} seans tamamlandı · Günlük hedef {goal} dk
+          </Text>
+
+          <View style={styles.heroProgressTrack}>
+            <View
+              style={[
+                styles.heroProgressFill,
+                { width: `${Math.min(percentage, 100)}%` },
+              ]}
+            />
+          </View>
+
+          <View style={styles.heroQuickRow}>
             <TouchableOpacity
-              style={[styles.actionButton, styles.actionButtonPrimary]}
-              onPress={() => setGoalModalVisible(true)}
+              style={styles.heroQuickBtn}
+              disabled={logMeditationMutation.isPending}
+              onPress={() => logMeditationMutation.mutate({ durationMin: 2, type: 'breath' })}
             >
-              <Text style={styles.actionButtonTextPrimary}>Hedefi Düzenle</Text>
+              <Text style={styles.heroQuickBtnText}>+2 dk Nefes</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.heroQuickBtn}
+              disabled={logMeditationMutation.isPending}
+              onPress={() => logMeditationMutation.mutate({ durationMin: 5, type: 'guided' })}
+            >
+              <Text style={styles.heroQuickBtnText}>+5 dk Meditasyon</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.heroQuickBtn, styles.heroQuickBtnSolid]}
+              onPress={() => startTimer(240, 'breath', '4-7-8 Nefes Egzersizi', true)}
+            >
+              <Text style={styles.heroQuickBtnSolidText}>Başlat</Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </LinearGradient>
 
         {/* 4-7-8 Breathing & Relief Presets */}
         <View style={styles.card}>
@@ -464,6 +542,101 @@ export default function MeditationScreen() {
               <Text style={styles.breathPresetEmoji}>✨</Text>
               <Text style={styles.breathPresetTitle}>Hızlı Stres</Text>
               <Text style={styles.breathPresetDuration}>2 dk</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* Ambient Meditation Music Player */}
+        <View style={styles.card}>
+          <View style={styles.musicHeaderRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.cardTitle}>🎵 Meditasyon Müzikleri</Text>
+              <Text style={styles.breathCardSub}>
+                Cihazında yer kaplamadan internet gerekmeden dinleyebilirsin.
+              </Text>
+            </View>
+            {isMusicPlaying && (
+              <TouchableOpacity style={styles.musicStopBtn} onPress={handleStopMusic}>
+                <Ionicons name="stop" size={14} color="#FFFFFF" />
+                <Text style={styles.musicStopText}>Durdur</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+
+          <View style={styles.musicGrid}>
+            {MEDITATION_TRACKS.map((track) => {
+              const active = selectedTrack === track.id && isMusicPlaying;
+              const selected = selectedTrack === track.id;
+              return (
+                <TouchableOpacity
+                  key={track.id}
+                  style={[
+                    styles.musicCard,
+                    selected && { borderColor: track.accent },
+                    active && { backgroundColor: `${track.accent}18` },
+                  ]}
+                  onPress={() => handleToggleTrack(track.id)}
+                  activeOpacity={0.8}
+                >
+                  <View style={styles.musicCardTop}>
+                    <Text style={styles.musicIcon}>{track.icon}</Text>
+                    <Ionicons
+                      name={active ? 'pause-circle' : 'play-circle-outline'}
+                      size={22}
+                      color={active ? track.accent : theme.colors.textSecondary}
+                    />
+                  </View>
+                  <Text style={styles.musicTitle} numberOfLines={1}>
+                    {track.title}
+                  </Text>
+                  <Text style={styles.musicSub} numberOfLines={1}>
+                    {active ? 'Çalıyor...' : track.subtitle}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          <View style={styles.musicControlsRow}>
+            <Text style={styles.musicVolLabel}>Ses:</Text>
+            {[
+              { label: 'Kısık', val: 0.35 },
+              { label: 'Orta', val: 0.65 },
+              { label: 'Yüksek', val: 0.95 },
+            ].map((opt) => {
+              const active = Math.abs(musicVolume - opt.val) < 0.1;
+              return (
+                <TouchableOpacity
+                  key={opt.label}
+                  style={[styles.musicVolChip, active && styles.musicVolChipActive]}
+                  onPress={() => handleVolumeChange(opt.val)}
+                >
+                  <Text style={[styles.musicVolText, active && styles.musicVolTextActive]}>
+                    {opt.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+            <TouchableOpacity
+              style={[
+                styles.musicTimerToggle,
+                autoPlayMusicInTimer && styles.musicTimerToggleActive,
+              ]}
+              onPress={() => setAutoPlayMusicInTimer((prev) => !prev)}
+            >
+              <Ionicons
+                name={autoPlayMusicInTimer ? 'musical-notes' : 'volume-mute-outline'}
+                size={13}
+                color={autoPlayMusicInTimer ? '#8B5CF6' : theme.colors.textSecondary}
+              />
+              <Text
+                style={[
+                  styles.musicTimerToggleText,
+                  autoPlayMusicInTimer && { color: '#8B5CF6', fontWeight: '700' },
+                ]}
+              >
+                Seansta çal
+              </Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -619,6 +792,22 @@ export default function MeditationScreen() {
                 />
               </View>
             </View>
+
+            <TouchableOpacity
+              style={styles.modalMusicPill}
+              onPress={() => handleToggleTrack(selectedTrack)}
+            >
+              <Ionicons
+                name={isMusicPlaying ? 'musical-notes' : 'volume-mute-outline'}
+                size={15}
+                color="#8B5CF6"
+              />
+              <Text style={styles.modalMusicPillText}>
+                {isMusicPlaying
+                  ? `${MEDITATION_TRACKS.find((t) => t.id === selectedTrack)?.title || 'Müzik'} çalıyor (Kapat)`
+                  : `${MEDITATION_TRACKS.find((t) => t.id === selectedTrack)?.title || 'Müzik'} Başlat`}
+              </Text>
+            </TouchableOpacity>
 
             <View style={styles.timerControls}>
               {!isTimerRunning && timerSeconds === 0 && (
@@ -1163,5 +1352,246 @@ const createStyles = (theme: ReturnType<typeof useTheme>) =>
       fontWeight: '800',
       color: theme.colors.text,
       marginTop: 4,
+    },
+    headerCircleBtn: {
+      width: 38,
+      height: 38,
+      borderRadius: 14,
+      backgroundColor: theme.colors.backgroundCard,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    heroCard: {
+      borderRadius: 24,
+      padding: 20,
+      marginBottom: theme.spacing.lg,
+      shadowColor: '#7C3AED',
+      shadowOffset: { width: 0, height: 8 },
+      shadowOpacity: 0.25,
+      shadowRadius: 16,
+      elevation: 6,
+    },
+    heroTopRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 14,
+    },
+    heroBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      backgroundColor: 'rgba(255,255,255,0.2)',
+      paddingHorizontal: 10,
+      paddingVertical: 5,
+      borderRadius: 999,
+    },
+    heroBadgeText: {
+      color: '#FFFFFF',
+      fontSize: 10.5,
+      fontWeight: '800',
+      letterSpacing: 0.7,
+    },
+    heroPctPill: {
+      backgroundColor: '#FFFFFF',
+      paddingHorizontal: 10,
+      paddingVertical: 4,
+      borderRadius: 999,
+    },
+    heroPctText: {
+      color: '#7C3AED',
+      fontSize: 12,
+      fontWeight: '800',
+    },
+    heroMetricRow: {
+      flexDirection: 'row',
+      alignItems: 'baseline',
+      gap: 8,
+      marginBottom: 4,
+    },
+    heroMetricValue: {
+      fontSize: 44,
+      fontWeight: '900',
+      color: '#FFFFFF',
+      letterSpacing: -1,
+    },
+    heroMetricUnit: {
+      fontSize: 17,
+      fontWeight: '700',
+      color: 'rgba(255,255,255,0.88)',
+    },
+    heroGoalSub: {
+      fontSize: 13,
+      fontWeight: '600',
+      color: 'rgba(255,255,255,0.85)',
+      marginBottom: 14,
+    },
+    heroProgressTrack: {
+      height: 8,
+      borderRadius: 999,
+      backgroundColor: 'rgba(255,255,255,0.25)',
+      overflow: 'hidden',
+      marginBottom: 16,
+    },
+    heroProgressFill: {
+      height: '100%',
+      borderRadius: 999,
+      backgroundColor: '#FFFFFF',
+    },
+    heroQuickRow: {
+      flexDirection: 'row',
+      gap: 8,
+    },
+    heroQuickBtn: {
+      flex: 1,
+      backgroundColor: 'rgba(255,255,255,0.18)',
+      paddingVertical: 9,
+      paddingHorizontal: 6,
+      borderRadius: 12,
+      alignItems: 'center',
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.28)',
+    },
+    heroQuickBtnText: {
+      color: '#FFFFFF',
+      fontSize: 11.5,
+      fontWeight: '800',
+    },
+    heroQuickBtnSolid: {
+      flex: 0.85,
+      backgroundColor: '#FFFFFF',
+      borderColor: '#FFFFFF',
+    },
+    heroQuickBtnSolidText: {
+      color: '#7C3AED',
+      fontSize: 12.5,
+      fontWeight: '800',
+    },
+    musicHeaderRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      justifyContent: 'space-between',
+      gap: 10,
+    },
+    musicStopBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      backgroundColor: '#EF4444',
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 10,
+    },
+    musicStopText: {
+      color: '#FFFFFF',
+      fontSize: 12,
+      fontWeight: '700',
+    },
+    musicGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 10,
+      marginTop: 4,
+    },
+    musicCard: {
+      width: '48%',
+      backgroundColor: theme.colors.backgroundSecondary,
+      borderRadius: 14,
+      padding: 12,
+      borderWidth: 1.5,
+      borderColor: theme.colors.border,
+      gap: 4,
+    },
+    musicCardTop: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: 4,
+    },
+    musicIcon: {
+      fontSize: 22,
+    },
+    musicTitle: {
+      fontSize: 13.5,
+      fontWeight: '700',
+      color: theme.colors.text,
+    },
+    musicSub: {
+      fontSize: 11.5,
+      color: theme.colors.textSecondary,
+    },
+    musicControlsRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      flexWrap: 'wrap',
+      gap: 6,
+      marginTop: 12,
+      paddingTop: 10,
+      borderTopWidth: 1,
+      borderTopColor: theme.colors.border,
+    },
+    musicVolLabel: {
+      fontSize: 12,
+      fontWeight: '600',
+      color: theme.colors.textSecondary,
+      marginRight: 2,
+    },
+    musicVolChip: {
+      paddingHorizontal: 9,
+      paddingVertical: 5,
+      borderRadius: 9,
+      backgroundColor: theme.colors.backgroundSecondary,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+    },
+    musicVolChipActive: {
+      backgroundColor: 'rgba(139, 92, 246, 0.14)',
+      borderColor: '#8B5CF6',
+    },
+    musicVolText: {
+      fontSize: 11.5,
+      fontWeight: '600',
+      color: theme.colors.textSecondary,
+    },
+    musicVolTextActive: {
+      color: '#8B5CF6',
+      fontWeight: '700',
+    },
+    musicTimerToggle: {
+      marginLeft: 'auto',
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      paddingHorizontal: 9,
+      paddingVertical: 5,
+      borderRadius: 9,
+      backgroundColor: theme.colors.backgroundSecondary,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+    },
+    musicTimerToggleActive: {
+      backgroundColor: 'rgba(139, 92, 246, 0.12)',
+      borderColor: 'rgba(139, 92, 246, 0.4)',
+    },
+    musicTimerToggleText: {
+      fontSize: 11.5,
+      color: theme.colors.textSecondary,
+    },
+    modalMusicPill: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingHorizontal: 14,
+      paddingVertical: 8,
+      borderRadius: 999,
+      backgroundColor: 'rgba(139, 92, 246, 0.12)',
+      marginBottom: 16,
+    },
+    modalMusicPillText: {
+      fontSize: 12.5,
+      fontWeight: '700',
+      color: '#8B5CF6',
     },
   });

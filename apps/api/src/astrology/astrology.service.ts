@@ -168,15 +168,75 @@ export class AstrologyService {
         });
     }
 
+    private extractBirthDateParts(
+        birthDate: string | Date,
+        timeZone = 'Europe/Istanbul',
+    ): { year: number; month: number; day: number } {
+        if (typeof birthDate === 'string') {
+            const dateOnlyMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(birthDate.trim());
+            if (dateOnlyMatch) {
+                return {
+                    year: Number(dateOnlyMatch[1]),
+                    month: Number(dateOnlyMatch[2]),
+                    day: Number(dateOnlyMatch[3]),
+                };
+            }
+        }
+
+        const date = birthDate instanceof Date ? birthDate : new Date(birthDate);
+        if (isNaN(date.getTime())) {
+            const now = new Date();
+            return {
+                year: now.getUTCFullYear(),
+                month: now.getUTCMonth() + 1,
+                day: now.getUTCDate(),
+            };
+        }
+
+        // If stored at UTC noon (safe normalized date), UTC parts are unambiguous worldwide
+        const utcHour = date.getUTCHours();
+        if (utcHour >= 6 && utcHour <= 18) {
+            return {
+                year: date.getUTCFullYear(),
+                month: date.getUTCMonth() + 1,
+                day: date.getUTCDate(),
+            };
+        }
+
+        // Otherwise interpret midnight-ish ISO timestamps in the user's local timezone
+        try {
+            const formatted = new Intl.DateTimeFormat('en-CA', {
+                timeZone,
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+            }).format(date);
+            const [y, m, d] = formatted.split('-').map(Number);
+            if (y && m && d) {
+                return { year: y, month: m, day: d };
+            }
+        } catch {
+            // Fallback below
+        }
+
+        return {
+            year: date.getUTCFullYear(),
+            month: date.getUTCMonth() + 1,
+            day: date.getUTCDate(),
+        };
+    }
+
     async calculateBirthChart(userId: string, input: BirthChartInput): Promise<BirthChartResult> {
         const { birthDate, birthTime, city } = input;
+        const parts = this.extractBirthDateParts(birthDate);
+        const normalizedBirthDateStr = `${parts.year}-${String(parts.month).padStart(2, '0')}-${String(parts.day).padStart(2, '0')}`;
         let result: BirthChartResult;
 
         try {
             const pythonServiceUrl = process.env.ASTROLOGY_SERVICE_URL || 'http://localhost:5001';
             const response = await axios.post(
                 `${pythonServiceUrl}/calculate-birth-chart`,
-                { birthDate, birthTime, city },
+                { birthDate: normalizedBirthDateStr, birthTime, city },
                 { timeout: 3000 },
             );
 
@@ -194,12 +254,12 @@ export class AstrologyService {
             this.logger.warn(
                 `Python astrology microservice unreachable (${error?.message}), using astronomical calculation fallback`,
             );
-            result = this.calculateAstronomicalFallback(birthDate, birthTime, city);
+            result = this.calculateAstronomicalFallback(normalizedBirthDateStr, birthTime, city);
         }
 
-        // Persist user's birth chart profile
+        // Persist user's birth chart profile at UTC noon so calendar day never shifts across timezones
         if (userId) {
-            const parsedDate = new Date(birthDate);
+            const parsedDate = new Date(Date.UTC(parts.year, parts.month - 1, parts.day, 12, 0, 0));
             if (!isNaN(parsedDate.getTime())) {
                 await this.prisma.birthChartProfile.upsert({
                     where: { userId },
@@ -232,7 +292,7 @@ export class AstrologyService {
 
         return {
             ...result,
-            birthDate,
+            birthDate: normalizedBirthDateStr,
             birthTime,
             city: city.trim(),
         };
@@ -243,26 +303,18 @@ export class AstrologyService {
         birthTime: string,
         city: string,
     ): BirthChartResult {
-        const date = new Date(birthDate);
+        const { year, month, day } = this.extractBirthDateParts(birthDate);
         const [hourStr = '12', minStr = '0'] = (birthTime || '12:00').split(':');
         const hours = Math.min(23, Math.max(0, parseInt(hourStr, 10) || 12));
         const minutes = Math.min(59, Math.max(0, parseInt(minStr, 10) || 0));
 
         // Ecliptic longitude approximation relative to Aries 0° (approx March 21)
-        const refUtc = Date.UTC(date.getUTCFullYear(), 2, 21, 0, 0, 0);
-        const targetUtc = Date.UTC(
-            date.getUTCFullYear(),
-            date.getUTCMonth(),
-            date.getUTCDate(),
-            hours,
-            minutes,
-            0,
-        );
+        const refUtc = Date.UTC(year, 2, 21, 0, 0, 0);
+        const targetUtc = Date.UTC(year, month - 1, day, hours, minutes, 0);
         let daysSinceEquinox = (targetUtc - refUtc) / (1000 * 60 * 60 * 24);
         if (daysSinceEquinox < 0) daysSinceEquinox += 365.2422;
 
         const sunLongitude = ((daysSinceEquinox / 365.2422) * 360) % 360;
-        const sunIndex = Math.floor(sunLongitude / 30) % 12;
         const sunDegree = Math.round((sunLongitude % 30) * 10) / 10;
 
         // Sidereal Moon position from J2000 reference (2000-01-01 Moon ~ 218.3°)
@@ -279,8 +331,10 @@ export class AstrologyService {
         const risingIndex = Math.floor(risingLongitude / 30) % 12;
         const risingDegree = Math.round((risingLongitude % 30) * 10) / 10;
 
+        const sunSign = this.getSimpleSunSign(`${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`);
+
         return {
-            sunSign: this.zodiacSigns[sunIndex],
+            sunSign,
             moonSign: this.zodiacSigns[moonIndex],
             risingSign: this.zodiacSigns[risingIndex],
             sunDegree,
@@ -369,10 +423,8 @@ export class AstrologyService {
     /**
      * Simple sun sign calculation
      */
-    getSimpleSunSign(birthDate: string): string {
-        const date = new Date(birthDate);
-        const month = date.getMonth() + 1;
-        const day = date.getDate();
+    getSimpleSunSign(birthDate: string, timeZone = 'Europe/Istanbul'): string {
+        const { month, day } = this.extractBirthDateParts(birthDate, timeZone);
 
         if ((month === 3 && day >= 21) || (month === 4 && day <= 19)) return 'aries';
         if ((month === 4 && day >= 20) || (month === 5 && day <= 20)) return 'taurus';

@@ -1,8 +1,9 @@
 'use client';
 
 import React from 'react';
-import { X, Smartphone, ExternalLink, Sparkles } from 'lucide-react';
+import { X, ExternalLink } from 'lucide-react';
 import { useAppContext } from './AppContext';
+import { AppleIcon, AndroidIcon, GooglePlayIcon } from './StoreIcons';
 
 export function DownloadModal() {
   const { downloadOpen, closeDownloadModal, t, storeLinks } = useAppContext();
@@ -33,9 +34,10 @@ export function DownloadModal() {
             alt="Kadın Atlası"
             className="h-28 w-28 object-contain"
           />
-          <span className="mt-2 inline-flex items-center gap-1 rounded-full bg-[#FFF0F5] px-3 py-1 text-xs font-bold text-[#E91E63] dark:bg-[#2a1936] dark:text-[#FF69B4]">
-            <Sparkles className="h-3.5 w-3.5" />
-            iOS & Android
+          <span className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-[#FFF0F5] px-3 py-1 text-xs font-bold text-[#E91E63] dark:bg-[#2a1936] dark:text-[#FF69B4]">
+            <AppleIcon className="h-3.5 w-3.5" />
+            <span>iOS &amp; Android</span>
+            <AndroidIcon className="h-3.5 w-3.5 text-[#3DDC84]" />
           </span>
           <h3 className="mt-3 text-xl font-extrabold text-[var(--text-main)]">
             {t.downloadModal.title}
@@ -50,7 +52,7 @@ export function DownloadModal() {
               className="flex items-center justify-between rounded-2xl bg-[#1A1523] px-5 py-3.5 text-sm font-bold text-white transition hover:opacity-90 dark:bg-white dark:text-[#1A1523]"
             >
               <span className="flex items-center gap-2.5">
-                <Smartphone className="h-4 w-4 text-[#FF69B4]" />
+                <AppleIcon className="h-5 w-5 shrink-0" />
                 {t.downloadModal.ios}
               </span>
               <ExternalLink className="h-4 w-4 opacity-70" />
@@ -63,7 +65,9 @@ export function DownloadModal() {
               className="flex items-center justify-between rounded-2xl bg-gradient-to-r from-[#FF69B4] to-[#D946EF] px-5 py-3.5 text-sm font-bold text-white transition hover:opacity-95"
             >
               <span className="flex items-center gap-2.5">
-                <Smartphone className="h-4 w-4" />
+                <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-white">
+                  <GooglePlayIcon className="h-4 w-4" />
+                </span>
                 {t.downloadModal.android}
               </span>
               <ExternalLink className="h-4 w-4 opacity-85" />

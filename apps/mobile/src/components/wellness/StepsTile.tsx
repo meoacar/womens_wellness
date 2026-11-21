@@ -2,7 +2,9 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Modal, TextInput, Alert } from 'react-native';
 import { WellnessTile } from './WellnessTile';
 import { useTheme } from '@/hooks/useTheme';
+import { usePedometer } from '@/hooks/usePedometer';
 import { wellnessService } from '@/services/api';
+import { pedometerSyncService } from '@/services/pedometerSync';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
 
@@ -15,12 +17,21 @@ interface StepsTileProps {
   } | null;
 }
 
+const STEP_ACCENT = '#10B981';
+
 export const StepsTile: React.FC<StepsTileProps> = ({ data }) => {
   const theme = useTheme();
   const router = useRouter();
   const queryClient = useQueryClient();
   const [modalVisible, setModalVisible] = useState(false);
   const [stepsInput, setStepsInput] = useState('');
+  const {
+    isPedometerAvailable,
+    hasPermission,
+    isAutoActive,
+    totalSteps: autoSteps,
+    enableAndStart,
+  } = usePedometer();
 
   const logStepsMutation = useMutation({
     mutationFn: (count: number) =>
@@ -29,9 +40,12 @@ export const StepsTile: React.FC<StepsTileProps> = ({ data }) => {
         count,
         isManual: true,
       }),
-    onSuccess: () => {
+    onSuccess: async (_res, count) => {
+      await pedometerSyncService.recordManualSteps(count);
       queryClient.invalidateQueries({ queryKey: ['homeSnapshot'] });
       queryClient.invalidateQueries({ queryKey: ['steps'] });
+      queryClient.invalidateQueries({ queryKey: ['dailyTasks'] });
+      queryClient.invalidateQueries({ queryKey: ['gamification'] });
       setModalVisible(false);
       setStepsInput('');
     },
@@ -49,102 +63,133 @@ export const StepsTile: React.FC<StepsTileProps> = ({ data }) => {
     logStepsMutation.mutate(count);
   };
 
-  const formatNumber = (num: number) => {
-    return new Intl.NumberFormat('tr-TR').format(num);
-  };
+  const formatNumber = (num: number) => new Intl.NumberFormat('tr-TR').format(num);
 
-  if (!data) {
+  const s = styles(theme);
+  const gradient: readonly [string, string] = theme.isDark
+    ? ['rgba(16,185,129,0.14)', 'rgba(6,182,212,0.06)']
+    : ['#ECFDF5', '#FFFFFF'];
+
+  const effectiveToday = Math.max(data?.today || 0, isAutoActive ? autoSteps : 0);
+  const effectiveGoal = data?.goal || 7000;
+  const effectivePct =
+    effectiveGoal > 0 ? Math.round((effectiveToday / effectiveGoal) * 100) : 0;
+
+  const quickActions = (
+    <View style={s.actionsRow}>
+      {isPedometerAvailable && hasPermission === false ? (
+        <TouchableOpacity
+          style={s.quickButton}
+          onPress={(e) => {
+            e.stopPropagation();
+            enableAndStart();
+          }}
+        >
+          <Text style={s.quickButtonText}>Oto Sayaç Aç</Text>
+        </TouchableOpacity>
+      ) : (
+        <TouchableOpacity
+          style={s.quickButton}
+          disabled={logStepsMutation.isPending}
+          onPress={(e) => {
+            e.stopPropagation();
+            logStepsMutation.mutate(effectiveToday + 2000);
+          }}
+        >
+          <Text style={s.quickButtonText}>+2.000</Text>
+        </TouchableOpacity>
+      )}
+      <TouchableOpacity
+        style={s.quickButton}
+        onPress={(e) => {
+          e.stopPropagation();
+          setModalVisible(true);
+        }}
+      >
+        <Text style={s.quickButtonText}>Ekle</Text>
+      </TouchableOpacity>
+    </View>
+  );
+
+  if (!data && effectiveToday <= 0) {
     return (
-      <WellnessTile
-        icon="👣"
-        title="Adım"
-        value="-"
-        isEmpty
-        emptyState="Bugün veri yok – Manuel Ekle"
-        onPress={() => router.push('/wellness/steps')}
-        actions={
-          <TouchableOpacity
-            style={styles(theme).actionButton}
-            onPress={(e) => {
-              e.stopPropagation();
-              setModalVisible(true);
-            }}
-          >
-            <Text style={styles(theme).actionButtonText}>Manuel Ekle</Text>
-          </TouchableOpacity>
-        }
-      />
+      <>
+        <WellnessTile
+          ionicon="footsteps-outline"
+          title="Adım"
+          value="-"
+          isEmpty
+          emptyState={
+            isAutoActive
+              ? 'Otomatik sayaç aktif'
+              : 'Bugün adım kaydı yok'
+          }
+          accentColor={STEP_ACCENT}
+          gradientColors={gradient}
+          onPress={() => router.push('/wellness/steps')}
+          actions={quickActions}
+        />
+        {renderModal()}
+      </>
     );
   }
 
-  const isGoalReached = data.percentage >= 100;
+  const isGoalReached = effectivePct >= 100;
 
-  return (
-    <>
-      <WellnessTile
-        icon="👣"
-        title="Adım"
-        subtitle={isGoalReached ? '✓ Hedefe ulaştın!' : undefined}
-        value={`${formatNumber(data.today)} adım`}
-        target={`Hedef ${formatNumber(data.goal)}`}
-        percentage={data.percentage}
-        onPress={() => router.push('/wellness/steps')}
-        actions={
-          <View style={styles(theme).actionsRow}>
-            <TouchableOpacity
-              style={styles(theme).smallActionButton}
-              onPress={(e) => {
-                e.stopPropagation();
-                setModalVisible(true);
-              }}
-            >
-              <Text style={styles(theme).smallActionText}>Manuel Ekle</Text>
-            </TouchableOpacity>
-          </View>
-        }
-      />
-
-      {/* Manual Entry Modal */}
+  function renderModal() {
+    return (
       <Modal
         visible={modalVisible}
         transparent
-        animationType="slide"
+        animationType="fade"
         onRequestClose={() => setModalVisible(false)}
       >
-        <View style={styles(theme).modalOverlay}>
-          <View style={styles(theme).modalContent}>
-            <Text style={styles(theme).modalTitle}>Adım Ekle</Text>
+        <View style={s.modalOverlay}>
+          <View style={s.modalContent}>
+            <Text style={s.modalTitle}>Bugünkü Adım Sayısı</Text>
 
-            <View style={styles(theme).inputContainer}>
-              <Text style={styles(theme).inputLabel}>Adım Sayısı</Text>
+            <View style={s.presetsRow}>
+              {[3000, 5000, 7500, 10000].map((val) => (
+                <TouchableOpacity
+                  key={val}
+                  style={s.presetChip}
+                  onPress={() => logStepsMutation.mutate(val)}
+                >
+                  <Text style={s.presetChipText}>{formatNumber(val)}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <View style={s.inputContainer}>
+              <Text style={s.inputLabel}>veya toplam adım girin</Text>
               <TextInput
-                style={styles(theme).input}
+                style={s.input}
                 value={stepsInput}
                 onChangeText={setStepsInput}
-                placeholder="ör: 5000"
+                placeholder="Örn: 6500"
                 placeholderTextColor={theme.colors.textSecondary}
                 keyboardType="number-pad"
                 autoFocus
               />
             </View>
 
-            <View style={styles(theme).modalButtons}>
+            <View style={s.modalButtons}>
               <TouchableOpacity
-                style={[styles(theme).modalButton, styles(theme).cancelButton]}
+                style={[s.modalButton, s.cancelButton]}
                 onPress={() => {
                   setModalVisible(false);
                   setStepsInput('');
                 }}
               >
-                <Text style={styles(theme).cancelButtonText}>İptal</Text>
+                <Text style={s.cancelButtonText}>İptal</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
-                style={[styles(theme).modalButton, styles(theme).saveButton]}
+                style={[s.modalButton, s.saveButton]}
                 onPress={handleManualAdd}
                 disabled={logStepsMutation.isPending}
               >
-                <Text style={styles(theme).saveButtonText}>
+                <Text style={s.saveButtonText}>
                   {logStepsMutation.isPending ? 'Kaydediliyor...' : 'Kaydet'}
                 </Text>
               </TouchableOpacity>
@@ -152,84 +197,119 @@ export const StepsTile: React.FC<StepsTileProps> = ({ data }) => {
           </View>
         </View>
       </Modal>
+    );
+  }
+
+  return (
+    <>
+      <WellnessTile
+        ionicon="footsteps-outline"
+        title="Adım"
+        subtitle={
+          isGoalReached
+            ? '✓ Hedefe ulaştın!'
+            : `${isAutoActive ? 'Oto • ' : ''}~${((effectiveToday * 0.75) / 1000).toFixed(1)} km`
+        }
+        value={`${formatNumber(effectiveToday)}`}
+        target={`Hedef ${formatNumber(effectiveGoal)} adım`}
+        percentage={effectivePct}
+        accentColor={STEP_ACCENT}
+        gradientColors={gradient}
+        onPress={() => router.push('/wellness/steps')}
+        actions={quickActions}
+      />
+      {renderModal()}
     </>
   );
 };
 
 const styles = (theme: ReturnType<typeof useTheme>) =>
   StyleSheet.create({
-    actionButton: {
-      backgroundColor: theme.colors.backgroundSecondary,
-      paddingVertical: 6,
-      paddingHorizontal: 12,
-      borderRadius: 8,
-      alignItems: 'center',
-    },
-    actionButtonText: {
-      fontSize: 12,
-      fontWeight: '600',
-      color: theme.colors.text,
-    },
     actionsRow: {
       flexDirection: 'row',
-      gap: 8,
+      gap: 6,
     },
-    smallActionButton: {
-      backgroundColor: theme.colors.backgroundSecondary,
-      paddingVertical: 6,
-      paddingHorizontal: 10,
-      borderRadius: 6,
+    quickButton: {
+      flex: 1,
+      backgroundColor: 'rgba(16, 185, 129, 0.14)',
+      paddingVertical: 7,
+      paddingHorizontal: 8,
+      borderRadius: 10,
+      alignItems: 'center',
+      borderWidth: 1,
+      borderColor: 'rgba(16, 185, 129, 0.3)',
     },
-    smallActionText: {
-      fontSize: 11,
-      fontWeight: '600',
-      color: theme.colors.text,
+    quickButtonText: {
+      fontSize: 11.5,
+      fontWeight: '700',
+      color: '#059669',
     },
     modalOverlay: {
       flex: 1,
-      backgroundColor: 'rgba(0, 0, 0, 0.5)',
+      backgroundColor: 'rgba(15, 10, 25, 0.55)',
       justifyContent: 'center',
       alignItems: 'center',
-      padding: theme.spacing.lg,
+      padding: 20,
     },
     modalContent: {
-      backgroundColor: theme.colors.background,
-      borderRadius: 16,
-      padding: theme.spacing.lg,
+      backgroundColor: theme.colors.backgroundCard,
+      borderRadius: 24,
+      padding: 22,
       width: '100%',
       maxWidth: 400,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
     },
     modalTitle: {
-      fontSize: 20,
-      fontWeight: '700',
+      fontSize: 19,
+      fontWeight: '800',
       color: theme.colors.text,
-      marginBottom: theme.spacing.lg,
+      marginBottom: 14,
+    },
+    presetsRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+      marginBottom: 14,
+    },
+    presetChip: {
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: 10,
+      backgroundColor: 'rgba(16, 185, 129, 0.12)',
+      borderWidth: 1,
+      borderColor: 'rgba(16, 185, 129, 0.3)',
+    },
+    presetChipText: {
+      fontSize: 12.5,
+      fontWeight: '700',
+      color: '#059669',
     },
     inputContainer: {
-      marginBottom: theme.spacing.lg,
+      marginBottom: 18,
     },
     inputLabel: {
-      fontSize: 14,
+      fontSize: 13,
       fontWeight: '600',
-      color: theme.colors.text,
-      marginBottom: theme.spacing.sm,
+      color: theme.colors.textSecondary,
+      marginBottom: 8,
     },
     input: {
-      backgroundColor: theme.colors.backgroundCard,
+      backgroundColor: theme.isDark ? '#141418' : '#F9FAFB',
       borderWidth: 1,
       borderColor: theme.colors.border,
       borderRadius: 12,
-      padding: theme.spacing.md,
+      padding: 14,
       fontSize: 16,
       color: theme.colors.text,
     },
     modalButtons: {
       flexDirection: 'row',
-      gap: 12,
+      gap: 10,
     },
     modalButton: {
       flex: 1,
-      paddingVertical: 14,
+      paddingVertical: 13,
       borderRadius: 12,
       alignItems: 'center',
     },
@@ -237,16 +317,16 @@ const styles = (theme: ReturnType<typeof useTheme>) =>
       backgroundColor: theme.colors.backgroundSecondary,
     },
     cancelButtonText: {
-      fontSize: 16,
+      fontSize: 15,
       fontWeight: '600',
       color: theme.colors.text,
     },
     saveButton: {
-      backgroundColor: theme.colors.primary,
+      backgroundColor: STEP_ACCENT,
     },
     saveButtonText: {
-      fontSize: 16,
-      fontWeight: '600',
-      color: theme.colors.textOnPrimary,
+      fontSize: 15,
+      fontWeight: '700',
+      color: '#FFFFFF',
     },
   });

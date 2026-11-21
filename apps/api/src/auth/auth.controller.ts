@@ -1,10 +1,11 @@
-import { Body, Controller, Post, UnauthorizedException, Get, Query, Res } from '@nestjs/common';
+import { Body, Controller, Post, UnauthorizedException, Get, Query, Res, Req } from '@nestjs/common';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
-import { IsString, IsEmail, IsNotEmpty, IsOptional, MinLength } from 'class-validator';
+import { IsString, IsEmail, IsNotEmpty, IsOptional, MinLength, IsObject } from 'class-validator';
 import { FastifyReply } from 'fastify';
-import { AuthService } from './auth.service';
+import { AuthService, type RegisterConsentInput } from './auth.service';
 import { GoogleAuthService } from './google-auth.service';
 import { MailService } from '../mail/mail.service';
+import { extractClientTelemetry } from '../common/utils/client-telemetry';
 import { join } from 'path';
 
 class RegisterDto {
@@ -32,6 +33,10 @@ class RegisterDto {
   @IsString()
   @IsOptional()
   dateOfBirth?: string; // ISO date string
+
+  @IsObject()
+  @IsOptional()
+  kvkkConsents?: RegisterConsentInput;
 }
 
 class LoginDto {
@@ -54,6 +59,12 @@ class RefreshDto {
   @IsString()
   @IsNotEmpty()
   refreshToken!: string;
+}
+
+class LogoutDto {
+  @IsString()
+  @IsOptional()
+  refreshToken?: string;
 }
 
 class ForgotPasswordDto {
@@ -104,8 +115,15 @@ export class AuthController {
 
   @Post('register')
   @ApiOperation({ summary: 'Register with email, username, and password' })
-  async register(@Body() dto: RegisterDto) {
-    const dateOfBirth = dto.dateOfBirth ? new Date(dto.dateOfBirth) : undefined;
+  async register(@Body() dto: RegisterDto, @Req() req: any) {
+    let dateOfBirth: Date | undefined;
+    if (dto.dateOfBirth) {
+      const rawDob = String(dto.dateOfBirth).trim();
+      const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(rawDob);
+      dateOfBirth = dateOnly
+        ? new Date(Date.UTC(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]), 12, 0, 0))
+        : new Date(rawDob);
+    }
     return this.authService.register(
       dto.email,
       dto.password,
@@ -113,29 +131,37 @@ export class AuthController {
       dto.firstName,
       dto.lastName,
       dateOfBirth,
+      extractClientTelemetry(req),
+      dto.kvkkConsents,
     );
   }
 
   @Post('login')
   @ApiOperation({ summary: 'Login with email/username and password' })
-  async login(@Body() dto: LoginDto) {
+  async login(@Body() dto: LoginDto, @Req() req: any) {
     const user = await this.authService.validateUser(dto.identifier, dto.password);
     if (!user) {
       throw new UnauthorizedException('Invalid credentials');
     }
-    return this.authService.login(user);
+    return this.authService.login(user, extractClientTelemetry(req));
   }
 
   @Post('google')
   @ApiOperation({ summary: 'Login with Google ID token' })
-  async googleLogin(@Body() dto: GoogleAuthDto) {
-    return this.googleAuthService.exchangeIdToken(dto.idToken);
+  async googleLogin(@Body() dto: GoogleAuthDto, @Req() req: any) {
+    return this.googleAuthService.exchangeIdToken(dto.idToken, extractClientTelemetry(req));
   }
 
   @Post('refresh')
   @ApiOperation({ summary: 'Refresh access token' })
-  async refresh(@Body() dto: RefreshDto) {
-    return this.authService.refreshToken(dto.refreshToken);
+  async refresh(@Body() dto: RefreshDto, @Req() req: any) {
+    return this.authService.refreshToken(dto.refreshToken, extractClientTelemetry(req));
+  }
+
+  @Post('logout')
+  @ApiOperation({ summary: 'Revoke refresh token session on logout' })
+  async logout(@Body() dto: LogoutDto) {
+    return this.authService.logout(dto?.refreshToken);
   }
 
   @Post('forgot-password')

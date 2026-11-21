@@ -10,7 +10,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useTheme } from '@/hooks/useTheme';
-import { API_BASE_URL as API_URL } from '@/utils/apiBaseUrl';
+import { pagesService } from '@/services/api';
+import { CmsMarkdownView } from '@/components/CmsMarkdownView';
 
 interface Page {
     id: string;
@@ -20,6 +21,7 @@ interface Page {
     contentTr: string;
     contentEn?: string;
     isActive: boolean;
+    updatedAt?: string;
 }
 
 export default function PageViewScreen() {
@@ -31,7 +33,6 @@ export default function PageViewScreen() {
     const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
-        console.log('PageViewScreen mounted with slug:', slug);
         if (slug) {
             fetchPage();
         }
@@ -41,17 +42,10 @@ export default function PageViewScreen() {
         try {
             setLoading(true);
             setError(null);
-            console.log('Fetching page from:', `${API_URL}/pages/slug/${slug}`);
-            const response = await fetch(`${API_URL}/pages/slug/${slug}`);
-
-            if (!response.ok) {
-                throw new Error('Sayfa bulunamadı');
-            }
-
-            const data = await response.json();
+            const data = await pagesService.getBySlug(slug);
             setPage(data);
         } catch (err: any) {
-            setError(err.message || 'Bir hata oluştu');
+            setError(err?.message || 'Sayfa bulunamadı');
         } finally {
             setLoading(false);
         }
@@ -83,7 +77,7 @@ export default function PageViewScreen() {
                     <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
                         <Text style={styles.backButtonText}>‹ Geri</Text>
                     </TouchableOpacity>
-                    <Text style={styles.headerTitle}>Hata</Text>
+                    <Text style={styles.headerTitle}>Sayfa</Text>
                     <View style={styles.headerRight} />
                 </View>
                 <View style={styles.errorContainer}>
@@ -111,7 +105,7 @@ export default function PageViewScreen() {
             <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
                 <View style={styles.content}>
                     <Text style={styles.title}>{page.titleTr}</Text>
-                    <Text style={styles.body}>{page.contentTr}</Text>
+                    <CmsMarkdownView content={page.contentTr} updatedAt={page.updatedAt} />
                 </View>
             </ScrollView>
         </SafeAreaView>
@@ -137,12 +131,12 @@ const createStyles = (theme: any) =>
             padding: theme.spacing.xs,
         },
         backButtonText: {
-            fontSize: 24,
+            fontSize: 20,
             color: theme.colors.primary,
             fontWeight: '600',
         },
         headerTitle: {
-            fontSize: 18,
+            fontSize: 17,
             fontWeight: '700',
             color: theme.colors.text,
             flex: 1,
@@ -150,29 +144,27 @@ const createStyles = (theme: any) =>
             marginHorizontal: theme.spacing.md,
         },
         headerRight: {
-            width: 40,
+            width: 48,
         },
         container: {
             flex: 1,
         },
         contentContainer: {
             padding: theme.spacing.lg,
+            paddingBottom: 40,
         },
         content: {
             backgroundColor: theme.colors.backgroundCard,
-            borderRadius: 12,
+            borderRadius: 16,
             padding: theme.spacing.lg,
+            borderWidth: 1,
+            borderColor: theme.colors.border,
         },
         title: {
-            fontSize: 24,
-            fontWeight: '700',
+            fontSize: 22,
+            fontWeight: '800',
             color: theme.colors.text,
-            marginBottom: theme.spacing.lg,
-        },
-        body: {
-            fontSize: 16,
-            lineHeight: 24,
-            color: theme.colors.text,
+            marginBottom: theme.spacing.sm,
         },
         loadingContainer: {
             flex: 1,
@@ -198,7 +190,7 @@ const createStyles = (theme: any) =>
             borderRadius: 12,
         },
         retryButtonText: {
-            color: theme.colors.textOnPrimary,
+            color: '#fff',
             fontSize: 16,
             fontWeight: '600',
         },

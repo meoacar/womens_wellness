@@ -1,13 +1,20 @@
 'use client';
 
 import { Create, useForm } from '@refinedev/antd';
-import { Form, Input, Select, InputNumber, Switch } from 'antd';
+import { AutoComplete, Form, Input, Select, InputNumber } from 'antd';
 import { useList } from '@refinedev/core';
 
 const planOptions = [
     { label: 'Ücretsiz (Free)', value: 'free' },
     { label: 'Premium', value: 'premium' },
 ];
+
+const MODEL_SUGGESTIONS: Record<string, string[]> = {
+    google: ['gemini-3.8-flash', 'gemini-3.5-flash', 'gemini-3-flash-preview', 'gemini-2.5-flash', 'gemini-2.5-pro'],
+    openai: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo'],
+    anthropic: ['claude-3-5-sonnet-20241022', 'claude-3-opus-20240229'],
+    deepseek: ['deepseek-chat', 'deepseek-coder', 'deepseek-reasoner'],
+};
 
 export default function ModelPolicyCreate() {
     const { formProps, saveButtonProps } = useForm({
@@ -35,7 +42,7 @@ export default function ModelPolicyCreate() {
         activeDbProviders.length > 0
             ? activeDbProviders
             : [
-                { label: '🔷 Google Gemini', value: 'google', modelName: 'gemini-2.5-flash' },
+                { label: '🔷 Google Gemini', value: 'google', modelName: 'gemini-3.8-flash' },
                 { label: '🤖 OpenAI', value: 'openai', modelName: 'gpt-4o-mini' },
                 { label: '🧠 Anthropic', value: 'anthropic', modelName: 'claude-3-5-sonnet-20241022' },
                 { label: '⚡ DeepSeek', value: 'deepseek', modelName: 'deepseek-chat' },
@@ -92,7 +99,14 @@ export default function ModelPolicyCreate() {
                     name="modelName"
                     rules={[{ required: true, message: 'Lütfen model adı giriniz' }]}
                 >
-                    <Input size="large" placeholder="Örn: gemini-2.5-flash" />
+                    <AutoComplete
+                        size="large"
+                        placeholder="Örn: gemini-3.8-flash"
+                        options={(MODEL_SUGGESTIONS[Form.useWatch('provider', formProps.form) || 'google'] || []).map((m) => ({
+                            label: m,
+                            value: m,
+                        }))}
+                    />
                 </Form.Item>
 
                 <Form.Item

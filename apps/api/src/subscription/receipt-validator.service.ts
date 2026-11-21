@@ -1,6 +1,12 @@
 import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as jwt from 'jsonwebtoken';
+import {
+    isCompactJws,
+    loadAppleRootCertificates,
+    parseAppleRootCertificatesFromPemOrB64,
+    verifyAppleJws,
+} from './utils/apple-jws-verifier';
 
 // Apple Receipt Types
 interface AppleReceiptData {
@@ -43,7 +49,8 @@ interface GoogleSubscriptionResponse {
     priceAmountMicros: string;
     countryCode: string;
     developerPayload: string;
-    paymentState: number;
+    paymentState?: number;
+    cancelReason?: number;
     orderId: string;
     purchaseType?: number;
     acknowledgementState?: number;
@@ -65,12 +72,21 @@ export class ReceiptValidatorService {
     constructor(private readonly configService: ConfigService) { }
 
     /**
-     * Validate Apple App Store receipt
-     * Tries production first, then sandbox for development
+     * Validate Apple App Store receipt (StoreKit 2 signed JWS or legacy StoreKit 1 base64 receipt)
      * Requirements: 10.1, 10.2, 10.3, 10.4, 10.5
      */
     async validateAppleReceipt(receiptData: string): Promise<AppleReceiptData> {
-        this.logger.log('Validating Apple receipt');
+        const trimmed = (receiptData || '').trim();
+        if (!trimmed) {
+            throw new BadRequestException('Apple makbuz verisi eksik');
+        }
+
+        if (isCompactJws(trimmed)) {
+            this.logger.log('Validating Apple StoreKit 2 JWS transaction');
+            return this.validateAppleJwsTransaction(trimmed);
+        }
+
+        this.logger.log('Validating legacy Apple receipt via verifyReceipt');
 
         const sharedSecret = this.configService.get<string>('APPLE_SHARED_SECRET');
         if (!sharedSecret) {
@@ -79,7 +95,7 @@ export class ReceiptValidatorService {
 
         // Try production environment first
         let response = await this.verifyAppleReceiptWithEndpoint(
-            receiptData,
+            trimmed,
             sharedSecret,
             this.APPLE_PRODUCTION_URL,
         );
@@ -88,7 +104,7 @@ export class ReceiptValidatorService {
         if (response.status === 21007) {
             this.logger.log('Receipt is from sandbox, trying sandbox endpoint');
             response = await this.verifyAppleReceiptWithEndpoint(
-                receiptData,
+                trimmed,
                 sharedSecret,
                 this.APPLE_SANDBOX_URL,
             );
@@ -103,6 +119,77 @@ export class ReceiptValidatorService {
 
         // Parse and return receipt data
         return this.parseAppleReceipt(response);
+    }
+
+    private validateAppleJwsTransaction(signedJws: string): AppleReceiptData {
+        let rootCertificates = loadAppleRootCertificates();
+        if (rootCertificates.length === 0) {
+            const configCerts =
+                this.configService.get<string>('APPLE_ROOT_CA_CERTS') ||
+                this.configService.get<string>('APPLE_ROOT_CA_PEM') ||
+                '';
+            rootCertificates = parseAppleRootCertificatesFromPemOrB64(configCerts);
+        }
+
+        let decoded: Record<string, any>;
+        try {
+            decoded = verifyAppleJws<Record<string, any>>(signedJws, {
+                rootCertificates,
+            }).payload;
+        } catch (error) {
+            throw new BadRequestException(
+                `Apple StoreKit 2 JWS doğrulama başarısız: ${error instanceof Error ? error.message : 'Geçersiz imza'}`,
+            );
+        }
+
+        const expectedBundleId =
+            this.configService.get<string>('APPLE_BUNDLE_ID') ||
+            process.env.APPLE_BUNDLE_ID ||
+            'com.kadinatlasi.wellness';
+        if (expectedBundleId && decoded.bundleId !== expectedBundleId) {
+            throw new BadRequestException(
+                `Apple bundleId eşleşmiyor (beklenen: ${expectedBundleId}, gelen: ${decoded.bundleId || 'yok'})`,
+            );
+        }
+
+        const expectedEnvironment =
+            this.configService.get<string>('APPLE_ENVIRONMENT') || process.env.APPLE_ENVIRONMENT;
+        if (expectedEnvironment && decoded.environment !== expectedEnvironment) {
+            throw new BadRequestException(
+                `Apple environment eşleşmiyor (beklenen: ${expectedEnvironment}, gelen: ${decoded.environment || 'yok'})`,
+            );
+        }
+
+        if (!decoded?.transactionId || !decoded?.originalTransactionId || !decoded?.productId) {
+            throw new BadRequestException('Apple StoreKit 2 JWS işlem alanları eksik');
+        }
+
+        const purchaseDate = new Date(Number(decoded.purchaseDate));
+        const expiresDate = new Date(Number(decoded.expiresDate));
+        if (
+            !Number.isFinite(purchaseDate.getTime()) ||
+            !Number.isFinite(expiresDate.getTime())
+        ) {
+            throw new BadRequestException('Apple StoreKit 2 JWS tarih bilgileri geçersiz');
+        }
+
+        const now = new Date();
+        const isCancelled = Boolean(decoded.revocationDate);
+        const isActive = !isCancelled && expiresDate > now;
+        const isTrialPeriod =
+            decoded.offerDiscountType === 'FREE_TRIAL' ||
+            (decoded.offerType === 1 && Number(decoded.price) === 0);
+
+        return {
+            transactionId: String(decoded.transactionId),
+            originalTransactionId: String(decoded.originalTransactionId),
+            productId: String(decoded.productId),
+            purchaseDate,
+            expiresDate,
+            isTrialPeriod,
+            isActive,
+            environment: decoded.environment === 'Sandbox' ? 'Sandbox' : 'Production',
+        };
     }
 
     /**
@@ -225,13 +312,28 @@ export class ReceiptValidatorService {
 
         const latestReceipt = sortedReceipts[0];
 
-        // Parse dates
-        const purchaseDate = new Date(parseInt(latestReceipt.purchase_date_ms));
-        const expiresDate = new Date(parseInt(latestReceipt.expires_date_ms));
+        if (
+            !latestReceipt?.transaction_id ||
+            !latestReceipt?.original_transaction_id ||
+            !latestReceipt?.product_id
+        ) {
+            throw new BadRequestException('Apple receipt alanları eksik');
+        }
 
-        // Check if active
+        // Parse dates
+        const purchaseDate = new Date(parseInt(latestReceipt.purchase_date_ms, 10));
+        const expiresDate = new Date(parseInt(latestReceipt.expires_date_ms, 10));
+        if (
+            !Number.isFinite(purchaseDate.getTime()) ||
+            !Number.isFinite(expiresDate.getTime())
+        ) {
+            throw new BadRequestException('Apple receipt tarih bilgileri geçersiz');
+        }
+
+        // Check if active and not refunded/cancelled
         const now = new Date();
-        const isActive = expiresDate > now;
+        const isCancelled = Boolean(latestReceipt.cancellation_date_ms);
+        const isActive = !isCancelled && expiresDate > now;
 
         return {
             transactionId: latestReceipt.transaction_id,
@@ -253,16 +355,30 @@ export class ReceiptValidatorService {
         productId: string,
         purchaseToken: string,
     ): GoogleReceiptData {
-        // Parse dates
-        const purchaseDate = new Date(parseInt(response.startTimeMillis));
-        const expiresDate = new Date(parseInt(response.expiryTimeMillis));
+        if (!response.orderId) {
+            throw new BadRequestException('Google receipt sipariş numarası eksik');
+        }
 
-        // Check if active
+        // Parse dates
+        const purchaseDate = new Date(parseInt(response.startTimeMillis, 10));
+        const expiresDate = new Date(parseInt(response.expiryTimeMillis, 10));
+        if (
+            !Number.isFinite(purchaseDate.getTime()) ||
+            !Number.isFinite(expiresDate.getTime())
+        ) {
+            throw new BadRequestException('Google receipt tarih bilgileri geçersiz');
+        }
+
+        // Check if active: not expired, not cancelled/revoked, and payment received (1) or free trial (2)
         const now = new Date();
-        const isActive = expiresDate > now && response.paymentState === 1;
+        const isPaidOrTrial = response.paymentState === 1 || response.paymentState === 2;
+        const isActive =
+            expiresDate > now &&
+            isPaidOrTrial &&
+            response.cancelReason === undefined;
 
         // Check if trial period
-        const isTrialPeriod = response.purchaseType === 0;
+        const isTrialPeriod = response.purchaseType === 0 || response.paymentState === 2;
 
         return {
             transactionId: response.orderId,

@@ -1,35 +1,70 @@
-import { useEffect, useState } from 'react';
-import { ActivityIndicator, View, AppState, AppStateStatus } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, View, AppState, AppStateStatus, StyleSheet } from 'react-native';
 import { Stack, useRouter } from 'expo-router';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import * as SecureStore from 'expo-secure-store';
 import * as SplashScreen from 'expo-splash-screen';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNotifications } from '../src/hooks/useNotifications';
 import { useQnaNotificationHandler } from '../src/hooks/useQnaNotificationHandler';
 import { useDeepLinking } from '../src/hooks/useDeepLinking';
 import { useAuthStore } from '../src/store/authStore';
+import { useFunNotificationStore } from '../src/store/funNotificationStore';
 import { queryClient } from '../src/lib/queryClient';
 import { iapManager } from '../src/services/iap.wrapper';
 import { subscriptionSyncService } from '../src/services/subscriptionSync';
+import { pedometerSyncService } from '../src/services/pedometerSync';
+import { widgetSyncService } from '../src/services/widgetSync';
+import {
+  getOsNotificationPermissionStatus,
+  syncPendingServerNotifications,
+} from '../src/services/notificationEngine';
 import { AnimatedSplash } from '../src/components/AnimatedSplash';
 import { AccountStatusModal } from '../src/components/AccountStatusModal';
+import { PinLockView } from '../src/components/PinLockView';
+import { NotificationConsentModal } from '../src/components/notifications/NotificationConsentModal';
 
-// Initialize monitoring (will be enabled after package installation)
-// import { initSentry } from '../src/lib/sentry';
-// import { initPostHog } from '../src/lib/posthog';
-// initSentry();
+import { initSentry } from '../src/lib/sentry';
+import { userService } from '../src/services/api';
+
+initSentry();
+
+// Forward unhandled mobile runtime errors to backend diagnostics safely
+const globalErrorUtils = (globalThis as any)?.ErrorUtils;
+if (globalErrorUtils?.getGlobalHandler && globalErrorUtils?.setGlobalHandler) {
+  const previousHandler = globalErrorUtils.getGlobalHandler();
+  globalErrorUtils.setGlobalHandler((error: any, isFatal?: boolean) => {
+    try {
+      if (useAuthStore.getState().isAuthenticated && error) {
+        userService
+          .reportClientError({
+            message: String(error?.message || error || 'Unhandled Mobile Error'),
+            stack: typeof error?.stack === 'string' ? error.stack : undefined,
+            level: isFatal ? 'FATAL' : 'ERROR',
+            path: 'react-native-runtime',
+          })
+          .catch(() => {});
+      }
+    } catch {
+      // Never block native error handler
+    }
+    if (typeof previousHandler === 'function') {
+      previousHandler(error, isFatal);
+    }
+  });
+}
 
 // Keep the splash screen visible while we fetch resources
-SplashScreen.preventAutoHideAsync();
+SplashScreen.preventAutoHideAsync().catch(() => {});
 
 function AppContent() {
   // CRITICAL: ALL HOOKS MUST BE CALLED BEFORE ANY CONDITIONAL RETURNS
   // This prevents "Rendered fewer hooks than expected" error
 
   // 1. Call all hooks first (unconditionally)
-  const { registerForPushNotifications } = useNotifications();
+  const { registerForPushNotifications, requestPermissions } = useNotifications();
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
   const initialize = useAuthStore((state) => state.initialize);
   const refreshMe = useAuthStore((state) => state.refreshMe);
@@ -38,10 +73,15 @@ function AppContent() {
   const forcedLogoutName = useAuthStore((state) => state.forcedLogoutName);
   const clearForcedLogoutReason = useAuthStore((state) => state.clearForcedLogoutReason);
   const isLoading = useAuthStore((state) => state.isLoading);
+  const pinEnabled = useAuthStore((state) => state.pinEnabled);
+  const isPinUnlocked = useAuthStore((state) => state.isPinUnlocked);
+  const setPinStatus = useAuthStore((state) => state.setPinStatus);
   const router = useRouter();
   const [pinCheckComplete, setPinCheckComplete] = useState(false);
+  const backgroundAtRef = useRef<number | null>(null);
   const [showAnimatedSplash, setShowAnimatedSplash] = useState(true);
   const [appIsReady, setAppIsReady] = useState(false);
+  const [showNotificationConsent, setShowNotificationConsent] = useState(false);
   const [suspendedNotice, setSuspendedNotice] = useState<{
     visible: boolean;
     message: string | null;
@@ -61,13 +101,9 @@ function AppContent() {
   useEffect(() => {
     const prepareApp = async () => {
       try {
+        // Hide native splash promptly so AnimatedSplash / app UI never hangs on slow networks
+        await SplashScreen.hideAsync().catch(() => {});
         await initialize();
-
-        // Initialize PostHog (will be enabled after package installation)
-        // await initPostHog();
-
-        // Hide the native splash screen
-        await SplashScreen.hideAsync();
       } catch (error) {
         console.error('App initialization error:', error);
       } finally {
@@ -102,15 +138,37 @@ function AppContent() {
     };
   }, []);
 
-  // Register for push notifications when user is authenticated
+  // Sync push token & pending notifications only when OS permission is already granted
   useEffect(() => {
-    if (isAuthenticated) {
-      registerForPushNotifications();
-    }
+    if (!isAuthenticated) return;
+
+    getOsNotificationPermissionStatus()
+      .then((info) => {
+        if (info.granted) {
+          void registerForPushNotifications(false);
+          void syncPendingServerNotifications();
+        }
+      })
+      .catch(() => {});
+
+    const pollInterval = setInterval(() => {
+      void syncPendingServerNotifications();
+    }, 30_000);
+
+    const appStateSub = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        void syncPendingServerNotifications();
+      }
+    });
+
+    return () => {
+      clearInterval(pollInterval);
+      appStateSub.remove();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAuthenticated]);
 
-  // Sync subscription status on app start
+  // Sync subscription status & automatic pedometer on app start
   // Requirement 14.1: THE System SHALL abonelik durumunu sunucuda saklar
   // Requirement 14.2: WHEN kullanıcı farklı cihazda oturum açtığında, 
   //                   THE System SHALL abonelik durumunu senkronize eder
@@ -120,6 +178,12 @@ function AppContent() {
       subscriptionSyncService.syncSubscriptionStatus().catch((error) => {
         console.error('[App] Failed to sync subscription on start:', error);
       });
+      pedometerSyncService.start(true).catch((error) => {
+        console.error('[App] Failed to start auto pedometer:', error);
+      });
+    } else if (!isAuthenticated && !isLoading) {
+      pedometerSyncService.stop();
+      widgetSyncService.clear();
     }
   }, [isAuthenticated, isLoading]);
 
@@ -143,12 +207,18 @@ function AppContent() {
   ]);
 
   // Handle app state changes (foreground/background)
-  // Sync subscription & user status when app comes to foreground
+  // Sync subscription & user status when app comes to foreground and re-lock PIN after backgrounding
   useEffect(() => {
     if (!isAuthenticated) return;
 
     const handleAppStateChange = (nextAppState: AppStateStatus) => {
-      if (nextAppState === 'active') {
+      if (nextAppState === 'background') {
+        backgroundAtRef.current = Date.now();
+        if (pinEnabled) {
+          setPinStatus(true, false);
+        }
+      } else if (nextAppState === 'active') {
+        backgroundAtRef.current = null;
         refreshMe().catch(() => {});
         if (subscriptionSyncService.shouldSync()) {
           console.log('[App] App foregrounded, syncing subscription...');
@@ -164,38 +234,88 @@ function AppContent() {
     return () => {
       subscription.remove();
     };
-  }, [isAuthenticated, refreshMe]);
+  }, [isAuthenticated, pinEnabled, refreshMe, setPinStatus]);
 
-  // Check for PIN lock ONLY on app start (once)
+  // Clear legacy persisted pinVerified on cold start and verify stored pinEnabled flag
   useEffect(() => {
     const checkPinLock = async () => {
-      if (!isAuthenticated || isLoading) {
-        setPinCheckComplete(true);
-        return;
-      }
-
       try {
-        const pinEnabled = await SecureStore.getItemAsync('pinEnabled');
-        const pinVerified = await SecureStore.getItemAsync('pinVerified');
-
-        if (pinEnabled === 'true' && pinVerified !== 'true') {
-          // PIN is enabled but not verified - redirect to pin-lock
-          router.replace('/pin-lock');
+        await SecureStore.deleteItemAsync('pinVerified').catch(() => {});
+        if (isAuthenticated && !isLoading) {
+          const storedPinEnabled = await SecureStore.getItemAsync('pinEnabled');
+          if (storedPinEnabled === 'true' && !pinEnabled) {
+            setPinStatus(true);
+          }
         }
       } catch (error) {
         console.error('PIN check error:', error);
       } finally {
-        setPinCheckComplete(true);
+        if (!isLoading) {
+          setPinCheckComplete(true);
+        }
       }
     };
 
     checkPinLock();
-    // Only run once when isAuthenticated becomes true
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAuthenticated, isLoading]);
+  }, [isAuthenticated, isLoading, pinEnabled, setPinStatus]);
 
   // 3. NOW we can do conditional rendering (after all hooks are called)
   const showLoading = !appIsReady || isLoading || !pinCheckComplete;
+  const shouldShowPinGate = !showLoading && isAuthenticated && pinEnabled && !isPinUnlocked;
+
+  // Ask user explicitly before triggering OS notification permission prompt
+  useEffect(() => {
+    if (showLoading || !isAuthenticated || shouldShowPinGate || showAnimatedSplash) {
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const info = await getOsNotificationPermissionStatus();
+        if (cancelled) return;
+        if (info.granted) {
+          return;
+        }
+        const prompted = await AsyncStorage.getItem('@notification_consent_prompted');
+        if (!cancelled && prompted !== 'true') {
+          setShowNotificationConsent(true);
+        }
+      } catch {
+        // Ignore storage/permission check errors
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [showLoading, isAuthenticated, shouldShowPinGate, showAnimatedSplash]);
+
+  // Safely consume Android Widget target route only once navigation Stack & PIN gate are ready
+  useEffect(() => {
+    if (showLoading || !isAuthenticated || shouldShowPinGate) return;
+
+    const navigateFromWidget = async () => {
+      const targetRoute = await widgetSyncService.consumePendingRoute();
+      if (targetRoute && targetRoute !== '/(tabs)/home') {
+        setTimeout(() => {
+          try {
+            router.push(targetRoute as any);
+          } catch {
+            // Ignore navigation errors
+          }
+        }, 180);
+      }
+    };
+
+    navigateFromWidget();
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        navigateFromWidget();
+      }
+    });
+    return () => sub.remove();
+  }, [showLoading, isAuthenticated, shouldShowPinGate, router]);
 
   return (
     <View style={{ flex: 1 }}>
@@ -209,6 +329,11 @@ function AppContent() {
             headerShown: false,
           }}
         />
+      )}
+      {shouldShowPinGate && (
+        <View style={[StyleSheet.absoluteFillObject, { zIndex: 999 }]}>
+          <PinLockView onUnlocked={() => setPinStatus(true, true)} />
+        </View>
       )}
       {showAnimatedSplash && (
         <AnimatedSplash
@@ -227,6 +352,20 @@ function AppContent() {
         onClose={() =>
           setSuspendedNotice((prev) => ({ ...prev, visible: false }))
         }
+      />
+      <NotificationConsentModal
+        visible={showNotificationConsent}
+        onAllow={async () => {
+          await AsyncStorage.setItem('@notification_consent_prompted', 'true').catch(() => {});
+          setShowNotificationConsent(false);
+          const granted = await requestPermissions(true);
+          useFunNotificationStore.getState().setEnabled(granted);
+        }}
+        onDecline={async () => {
+          await AsyncStorage.setItem('@notification_consent_prompted', 'true').catch(() => {});
+          useFunNotificationStore.getState().setEnabled(false);
+          setShowNotificationConsent(false);
+        }}
       />
     </View>
   );

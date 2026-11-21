@@ -9,12 +9,16 @@ import {
   Platform,
   ActivityIndicator,
   Alert,
+  Animated,
+  ScrollView,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useState, useRef, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import * as Clipboard from 'expo-clipboard';
+import Markdown from 'react-native-markdown-display';
 import { useAuthStore } from '@/store/authStore';
 import { chatService, quotaService } from '@/services/api';
 import { SSEClient } from '@/lib/sse';
@@ -94,7 +98,36 @@ export default function ChatScreen() {
   const [showDoctorCoachUpgrade, setShowDoctorCoachUpgrade] = useState(false);
   const [showQuotaExceeded, setShowQuotaExceeded] = useState(false);
 
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const orbPulse = useRef(new Animated.Value(1)).current;
   const flatListRef = useRef<FlatList>(null);
+
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(orbPulse, {
+          toValue: 1.07,
+          duration: 1500,
+          useNativeDriver: true,
+        }),
+        Animated.timing(orbPulse, {
+          toValue: 1,
+          duration: 1500,
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [orbPulse]);
+
+  const handleCopyMessage = async (id: string, text: string) => {
+    await Clipboard.setStringAsync(text);
+    setCopiedId(id);
+    setTimeout(() => {
+      setCopiedId((prev) => (prev === id ? null : prev));
+    }, 1800);
+  };
   const sseClient = useRef<SSEClient>(new SSEClient());
   const streamingContentRef = useRef('');
 
@@ -371,7 +404,53 @@ export default function ChatScreen() {
 
         <View style={styles.assistantBubble}>
           {item.content ? (
-            <Text style={styles.messageText}>{item.content}</Text>
+            <>
+              <Markdown
+                style={{
+                  body: {
+                    color: theme.colors.text,
+                    fontSize: 15,
+                    lineHeight: 22,
+                    marginTop: 0,
+                    marginBottom: 0,
+                  },
+                  paragraph: { marginTop: 0, marginBottom: 6 },
+                  heading1: { fontSize: 17, fontWeight: '800', color: theme.colors.text, marginBottom: 6 },
+                  heading2: { fontSize: 16, fontWeight: '700', color: theme.colors.text, marginBottom: 4 },
+                  heading3: { fontSize: 15, fontWeight: '700', color: theme.colors.text, marginBottom: 4 },
+                  strong: { fontWeight: '700', color: theme.colors.text },
+                  bullet_list: { marginBottom: 6 },
+                  ordered_list: { marginBottom: 6 },
+                  list_item: { marginBottom: 3 },
+                }}
+              >
+                {item.content}
+              </Markdown>
+              {!item.isStreaming && (
+                <View style={styles.assistantFooter}>
+                  <Text style={styles.assistantTag}>NOVA AI</Text>
+                  <TouchableOpacity
+                    style={styles.copyBtn}
+                    onPress={() => handleCopyMessage(item.id, item.content)}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons
+                      name={copiedId === item.id ? 'checkmark-outline' : 'copy-outline'}
+                      size={13}
+                      color={copiedId === item.id ? '#10B981' : theme.colors.textSecondary}
+                    />
+                    <Text
+                      style={[
+                        styles.copyBtnText,
+                        copiedId === item.id && { color: '#10B981' },
+                      ]}
+                    >
+                      {copiedId === item.id ? 'Kopyalandı' : 'Kopyala'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </>
           ) : item.isStreaming ? (
             <View style={styles.typingIndicator}>
               <ActivityIndicator size="small" color={theme.colors.primary} />
@@ -526,28 +605,42 @@ export default function ChatScreen() {
           }}
           ListEmptyComponent={() => (
             <View style={styles.emptyState}>
-              <LinearGradient
-                colors={['#EC4899', '#8B5CF6']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.emptyOrb}
-              >
-                <Ionicons name="sparkles" size={32} color="#FFFFFF" />
-              </LinearGradient>
+              <Animated.View style={{ transform: [{ scale: orbPulse }] }}>
+                <LinearGradient
+                  colors={['#EC4899', '#A855F7', '#6366F1']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={styles.emptyOrb}
+                >
+                  <Ionicons name="sparkles" size={34} color="#FFFFFF" />
+                </LinearGradient>
+              </Animated.View>
 
-              <Text style={styles.emptyTitle}>Merhaba, ben NOVA</Text>
+              <View style={styles.emptyBadge}>
+                <View
+                  style={[
+                    styles.statusDot,
+                    { backgroundColor: isNovaEnabled ? '#10B981' : '#EF4444' },
+                  ]}
+                />
+                <Text style={styles.emptyBadgeText}>
+                  {isNovaEnabled ? 'NOVA AI • Hazır' : 'NOVA Bakımda'}
+                </Text>
+              </View>
+
+              <Text style={styles.emptyTitle}>Merhaba, ben NOVA ✨</Text>
               <Text style={styles.emptySubtitle}>
                 {novaQuota?.systemGreeting ||
                   'Döngün, hamilelik sürecin, su tüketimin veya günlük wellness hedeflerin hakkında bana her şeyi sorabilirsin.'}
               </Text>
 
-              <View style={styles.promptsGrid}>
+              <View style={styles.promptsGrid2Col}>
                 {SUGGESTED_PROMPTS.map((p) => (
                   <TouchableOpacity
                     key={p.text}
-                    style={styles.promptChip}
+                    style={styles.promptCard}
                     onPress={() => sendPrompt(p.text)}
-                    activeOpacity={0.8}
+                    activeOpacity={0.82}
                   >
                     <View
                       style={[
@@ -555,51 +648,50 @@ export default function ChatScreen() {
                         { backgroundColor: `${p.color}18` },
                       ]}
                     >
-                      <Ionicons name={p.icon} size={16} color={p.color} />
+                      <Ionicons name={p.icon} size={18} color={p.color} />
                     </View>
-                    <Text style={styles.promptText}>{p.text}</Text>
-                    <Ionicons
-                      name="arrow-forward"
-                      size={14}
-                      color={theme.colors.textLight}
-                    />
+                    <Text style={styles.promptCardText} numberOfLines={3}>
+                      {p.text}
+                    </Text>
                   </TouchableOpacity>
                 ))}
+              </View>
 
-                <TouchableOpacity
+              <TouchableOpacity
+                style={styles.doctorCoachCard}
+                onPress={() => {
+                  if (!isPremium) {
+                    setShowDoctorCoachUpgrade(true);
+                    return;
+                  }
+                  sendPrompt(
+                    'Son 14 günlük semptom ve döngü geçmişime bakarak doktor/jinekolog randevumda sormam gereken en önemli 5 soruyu ve bugüne özel bakım planımı hazırla.',
+                  );
+                }}
+                activeOpacity={0.85}
+              >
+                <View
                   style={[
-                    styles.promptChip,
-                    { borderColor: '#F59E0B', backgroundColor: 'rgba(245, 158, 11, 0.08)' },
+                    styles.promptIconBox,
+                    { backgroundColor: 'rgba(245, 158, 11, 0.2)' },
                   ]}
-                  onPress={() => {
-                    if (!isPremium) {
-                      setShowDoctorCoachUpgrade(true);
-                      return;
-                    }
-                    sendPrompt(
-                      'Son 14 günlük semptom ve döngü geçmişime bakarak doktor/jinekolog randevumda sormam gereken en önemli 5 soruyu ve bugüne özel bakım planımı hazırla.',
-                    );
-                  }}
-                  activeOpacity={0.8}
                 >
-                  <View
-                    style={[
-                      styles.promptIconBox,
-                      { backgroundColor: 'rgba(245, 158, 11, 0.18)' },
-                    ]}
-                  >
-                    <Ionicons name="medkit-outline" size={16} color="#D97706" />
-                  </View>
+                  <Ionicons name="medkit-outline" size={18} color="#D97706" />
+                </View>
+                <View style={{ flex: 1 }}>
                   <Text style={styles.promptText}>
                     Doktor Randevusu Soru Listesi & Faz Planım {!isPremium ? '👑' : ''}
                   </Text>
-                  <Ionicons
-                    name={isPremium ? 'arrow-forward' : 'lock-closed-outline'}
-                    size={14}
-                    color="#D97706"
-                  />
-                </TouchableOpacity>
-              </View>
+                  <Text style={styles.doctorCoachSub}>
+                    Son 14 günlük verilerine göre kişisel özet hazırla
+                  </Text>
+                </View>
+                <Ionicons
+                  name={isPremium ? 'arrow-forward' : 'lock-closed-outline'}
+                  size={16}
+                  color="#D97706"
+                />
+              </TouchableOpacity>
             </View>
           )}
         />
@@ -611,13 +703,35 @@ export default function ChatScreen() {
             { paddingBottom: Math.max(insets.bottom + 64, 72) },
           ]}
         >
+          {messages.length > 0 && !isStreaming && isNovaEnabled && (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.quickChipsRow}
+            >
+              {SUGGESTED_PROMPTS.map((p) => (
+                <TouchableOpacity
+                  key={p.text}
+                  style={styles.quickChip}
+                  onPress={() => sendPrompt(p.text)}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name={p.icon} size={13} color={p.color} />
+                  <Text style={styles.quickChipText} numberOfLines={1}>
+                    {p.text}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          )}
+
           {inputText.length > maxMessageLength * 0.75 && (
             <Text style={styles.charCount}>
               {inputText.length}/{maxMessageLength}
             </Text>
           )}
 
-          <View style={styles.inputRow}>
+          <View style={styles.inputPill}>
             {isStreaming ? (
               <TouchableOpacity
                 style={styles.stopButton}
@@ -644,13 +758,6 @@ export default function ChatScreen() {
                   maxLength={maxMessageLength}
                 />
                 <TouchableOpacity
-                  style={[
-                    styles.sendButton,
-                    (!inputText.trim() ||
-                      sendMessageMutation.isPending ||
-                      !isNovaEnabled) &&
-                      styles.sendButtonDisabled,
-                  ]}
                   onPress={() => sendPrompt(inputText)}
                   disabled={
                     !inputText.trim() ||
@@ -659,11 +766,24 @@ export default function ChatScreen() {
                   }
                   activeOpacity={0.85}
                 >
-                  {sendMessageMutation.isPending ? (
-                    <ActivityIndicator size="small" color="#fff" />
-                  ) : (
-                    <Ionicons name="arrow-up" size={18} color="#FFFFFF" />
-                  )}
+                  <LinearGradient
+                    colors={
+                      !inputText.trim() ||
+                      sendMessageMutation.isPending ||
+                      !isNovaEnabled
+                        ? [theme.colors.border, theme.colors.border]
+                        : ['#EC4899', '#8B5CF6']
+                    }
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={styles.sendButton}
+                  >
+                    {sendMessageMutation.isPending ? (
+                      <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                      <Ionicons name="arrow-up" size={18} color="#FFFFFF" />
+                    )}
+                  </LinearGradient>
                 </TouchableOpacity>
               </>
             )}
@@ -875,6 +995,34 @@ const createStyles = (theme: ReturnType<typeof useTheme>) =>
       color: '#FFFFFF',
       fontWeight: '500',
     },
+    assistantFooter: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginTop: 8,
+      paddingTop: 6,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: theme.colors.border,
+    },
+    assistantTag: {
+      fontSize: 10.5,
+      fontWeight: '700',
+      color: theme.colors.textLight,
+      letterSpacing: 0.4,
+    },
+    copyBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      paddingHorizontal: 6,
+      paddingVertical: 2,
+      borderRadius: 8,
+    },
+    copyBtnText: {
+      fontSize: 11,
+      fontWeight: '600',
+      color: theme.colors.textSecondary,
+    },
     typingIndicator: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -889,62 +1037,106 @@ const createStyles = (theme: ReturnType<typeof useTheme>) =>
       flex: 1,
       justifyContent: 'center',
       alignItems: 'center',
-      paddingHorizontal: 16,
+      paddingHorizontal: 8,
       paddingBottom: 40,
       gap: 10,
     },
     emptyOrb: {
-      width: 68,
-      height: 68,
-      borderRadius: 34,
+      width: 76,
+      height: 76,
+      borderRadius: 38,
       justifyContent: 'center',
       alignItems: 'center',
       marginBottom: 4,
       shadowColor: '#EC4899',
-      shadowOffset: { width: 0, height: 6 },
-      shadowOpacity: 0.25,
-      shadowRadius: 12,
-      elevation: 6,
+      shadowOffset: { width: 0, height: 8 },
+      shadowOpacity: 0.32,
+      shadowRadius: 16,
+      elevation: 8,
+    },
+    emptyBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      backgroundColor: theme.colors.backgroundCard,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      paddingHorizontal: 12,
+      paddingVertical: 4,
+      borderRadius: 999,
+    },
+    emptyBadgeText: {
+      fontSize: 11.5,
+      fontWeight: '700',
+      color: theme.colors.textSecondary,
     },
     emptyTitle: {
-      fontSize: 22,
+      fontSize: 23,
       fontWeight: '800',
       color: theme.colors.text,
+      letterSpacing: -0.3,
     },
     emptySubtitle: {
-      fontSize: 14,
+      fontSize: 13.5,
       color: theme.colors.textSecondary,
       textAlign: 'center',
       lineHeight: 20,
       paddingHorizontal: 10,
-      marginBottom: 8,
+      marginBottom: 6,
     },
-    promptsGrid: {
+    promptsGrid2Col: {
       width: '100%',
-      gap: 8,
-    },
-    promptChip: {
       flexDirection: 'row',
-      alignItems: 'center',
+      flexWrap: 'wrap',
       gap: 10,
+    },
+    promptCard: {
+      width: '48.2%',
       backgroundColor: theme.colors.backgroundCard,
       borderWidth: 1,
       borderColor: theme.colors.border,
-      borderRadius: 16,
+      borderRadius: 18,
+      padding: 13,
+      gap: 10,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.04,
+      shadowRadius: 6,
+      elevation: 2,
+    },
+    promptCardText: {
+      fontSize: 13,
+      fontWeight: '600',
+      lineHeight: 18,
+      color: theme.colors.text,
+    },
+    doctorCoachCard: {
+      width: '100%',
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      backgroundColor: 'rgba(245, 158, 11, 0.08)',
+      borderWidth: 1,
+      borderColor: 'rgba(245, 158, 11, 0.45)',
+      borderRadius: 18,
       paddingHorizontal: 14,
-      paddingVertical: 12,
+      paddingVertical: 13,
+    },
+    doctorCoachSub: {
+      fontSize: 11.5,
+      color: theme.colors.textSecondary,
+      marginTop: 2,
     },
     promptIconBox: {
-      width: 30,
-      height: 30,
-      borderRadius: 10,
+      width: 34,
+      height: 34,
+      borderRadius: 12,
       justifyContent: 'center',
       alignItems: 'center',
     },
     promptText: {
-      flex: 1,
       fontSize: 13.5,
-      fontWeight: '600',
+      fontWeight: '700',
       color: theme.colors.text,
     },
     inputWrapper: {
@@ -953,46 +1145,67 @@ const createStyles = (theme: ReturnType<typeof useTheme>) =>
       left: 0,
       right: 0,
       paddingHorizontal: 14,
-      paddingTop: 10,
+      paddingTop: 8,
+      backgroundColor: theme.colors.background,
+    },
+    quickChipsRow: {
+      gap: 8,
+      paddingBottom: 8,
+    },
+    quickChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
       backgroundColor: theme.colors.backgroundCard,
-      borderTopWidth: 1,
-      borderTopColor: theme.colors.border,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      borderRadius: 999,
+      paddingHorizontal: 12,
+      paddingVertical: 7,
+      maxWidth: 220,
+    },
+    quickChipText: {
+      fontSize: 12,
+      fontWeight: '600',
+      color: theme.colors.text,
     },
     charCount: {
       fontSize: 11,
       color: theme.colors.textLight,
       textAlign: 'right',
       marginBottom: 4,
-      marginRight: 6,
+      marginRight: 10,
     },
-    inputRow: {
+    inputPill: {
       flexDirection: 'row',
       alignItems: 'flex-end',
       gap: 8,
+      backgroundColor: theme.colors.backgroundCard,
+      borderRadius: 26,
+      paddingLeft: 14,
+      paddingRight: 6,
+      paddingVertical: 6,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.08,
+      shadowRadius: 12,
+      elevation: 4,
     },
     input: {
       flex: 1,
-      backgroundColor: theme.colors.background,
-      borderRadius: 20,
-      paddingHorizontal: 15,
-      paddingVertical: 10,
+      paddingVertical: 8,
       fontSize: 15,
       maxHeight: 110,
-      borderWidth: 1,
-      borderColor: theme.colors.border,
       color: theme.colors.text,
     },
     sendButton: {
-      width: 40,
-      height: 40,
-      borderRadius: 20,
-      backgroundColor: theme.colors.primary,
+      width: 38,
+      height: 38,
+      borderRadius: 19,
       justifyContent: 'center',
       alignItems: 'center',
-    },
-    sendButtonDisabled: {
-      backgroundColor: theme.colors.textLight,
-      opacity: 0.6,
     },
     stopButton: {
       flex: 1,

@@ -178,10 +178,46 @@ export const ZODIAC_SIGNS: Record<ZodiacSign, ZodiacInfo> = {
     },
 };
 
+/**
+ * Parse a birth date string or Date into local noon (12:00:00) so historical DST
+ * and timezone offsets never shift the calendar day by ±1 day.
+ */
+export function parseBirthDateSafe(value: Date | string | null | undefined): Date | null {
+    if (!value) return null;
+    if (typeof value === 'string') {
+        const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+        if (dateOnly) {
+            return new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]), 12, 0, 0, 0);
+        }
+        const parsed = new Date(value);
+        if (Number.isNaN(parsed.getTime())) return null;
+        // If stored around UTC noon (normalized), UTC calendar date is exact everywhere
+        const utcHour = parsed.getUTCHours();
+        if (utcHour >= 6 && utcHour <= 18) {
+            return new Date(parsed.getUTCFullYear(), parsed.getUTCMonth(), parsed.getUTCDate(), 12, 0, 0, 0);
+        }
+        return new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate(), 12, 0, 0, 0);
+    }
+    if (Number.isNaN(value.getTime())) return null;
+    return new Date(value.getFullYear(), value.getMonth(), value.getDate(), 12, 0, 0, 0);
+}
+
+/**
+ * Serialize a calendar birth date to UTC noon ISO string so the calendar day
+ * stays identical across all client & server timezones.
+ */
+export function toBirthDateIsoNoon(date: Date): string {
+    return new Date(
+        Date.UTC(date.getFullYear(), date.getMonth(), date.getDate(), 12, 0, 0, 0)
+    ).toISOString();
+}
+
 // Calculate zodiac sign from birth date
-export function getZodiacSign(birthDate: Date): ZodiacSign {
-    const month = birthDate.getMonth() + 1; // 1-12
-    const day = birthDate.getDate();
+export function getZodiacSign(birthDate: Date | string): ZodiacSign {
+    const normalized = parseBirthDateSafe(birthDate);
+    const d = normalized || (birthDate instanceof Date ? birthDate : new Date(birthDate));
+    const month = d.getMonth() + 1; // 1-12
+    const day = d.getDate();
 
     if ((month === 3 && day >= 21) || (month === 4 && day <= 19)) return 'aries';
     if ((month === 4 && day >= 20) || (month === 5 && day <= 20)) return 'taurus';

@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { GamificationService } from './gamification.service';
-import { GamificationController, PublicGamificationController } from './gamification.controller';
+import { GamificationController } from './gamification.controller';
 import { GamificationAdminController } from './gamification-admin.controller';
 import { AchievementService } from './achievement.service';
 import { InsightService } from './insight.service';
@@ -11,7 +11,6 @@ import { AdminGuard } from '../common/guards/admin.guard';
     imports: [PrismaModule],
     controllers: [
         GamificationController,
-        PublicGamificationController,
         GamificationAdminController,
     ],
     providers: [GamificationService, AchievementService, InsightService, AdminGuard],

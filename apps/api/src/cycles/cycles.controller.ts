@@ -115,7 +115,7 @@ export class CyclesController {
     @Body()
     data: {
       startDate?: string;
-      endDate?: string;
+      endDate?: string | null;
       symptoms?: PeriodSymptoms;
       notes?: string;
     },

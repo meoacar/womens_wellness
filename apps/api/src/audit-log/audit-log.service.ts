@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import type { ClientTelemetry } from '../common/utils/client-telemetry';
 
 export enum AuditAction {
   CREATE = 'CREATE',
@@ -149,5 +150,30 @@ export class AuditLogService {
       entity: 'auth',
       metadataJson: metadata,
     });
+  }
+
+  async touchUserTelemetry(userId: string, telemetry?: ClientTelemetry) {
+    if (!userId || !telemetry) return;
+    const hasFields = Boolean(
+      telemetry.ipAddress ||
+        telemetry.deviceModel ||
+        telemetry.osVersion ||
+        telemetry.appVersion ||
+        telemetry.userAgent,
+    );
+    if (!hasFields) return;
+    await this.prisma.user
+      .update({
+        where: { id: userId },
+        data: {
+          ...(telemetry.ipAddress ? { lastIpAddress: telemetry.ipAddress } : {}),
+          ...(telemetry.deviceModel ? { lastDeviceModel: telemetry.deviceModel } : {}),
+          ...(telemetry.osVersion ? { lastOsVersion: telemetry.osVersion } : {}),
+          ...(telemetry.appVersion ? { lastAppVersion: telemetry.appVersion } : {}),
+          ...(telemetry.userAgent ? { lastUserAgent: telemetry.userAgent } : {}),
+          lastSeenAt: new Date(),
+        },
+      })
+      .catch(() => {});
   }
 }

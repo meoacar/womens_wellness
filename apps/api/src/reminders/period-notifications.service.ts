@@ -40,6 +40,7 @@ export interface DispatchRunLog {
   trigger: 'cron' | 'manual';
   totalActivePeriodUsers: number;
   sent: number;
+  queued?: number;
   skippedNoToken: number;
   skippedQuietOrHour: number;
   skippedDailyLimit: number;
@@ -518,6 +519,7 @@ export class PeriodNotificationsService {
     const now = new Date();
 
     let sent = 0;
+    let queued = 0;
     let skippedNoToken = 0;
     let skippedQuietOrHour = 0;
     let skippedDailyLimit = 0;
@@ -534,7 +536,7 @@ export class PeriodNotificationsService {
           skippedQuietOrHour++;
           continue;
         }
-        if (!this.scheduler.shouldSendPush(now, user.quietHours)) {
+        if (!this.scheduler.shouldSendPush(now, { ...user.quietHours, timezone: user.timezone })) {
           skippedQuietOrHour++;
           continue;
         }
@@ -563,35 +565,47 @@ export class PeriodNotificationsService {
 
       if (!user.pushToken) {
         skippedNoToken++;
-        continue;
       }
 
-      const receipt = await this.pushService.sendPush(user.userId, {
-        to: '',
-        sound: 'default',
-        title: selected.titleTr,
-        body: selected.messageTr,
-        data: {
-          type: 'PERIOD_SUPPORT',
-          screen: 'home',
-          cycleDay: user.cycleDay,
-          messageId: selected.id,
+      const receipt = await this.pushService.sendPush(
+        user.userId,
+        {
+          to: '',
+          sound: 'default',
+          title: selected.titleTr,
+          body: selected.messageTr,
+          data: {
+            type: 'PERIOD_SUPPORT',
+            screen: 'home',
+            cycleDay: user.cycleDay,
+            messageId: selected.id,
+          },
         },
-      });
+        { ignoreQuietHours: forceNow },
+      );
 
-      if (receipt.status === 'ok') {
-        sent++;
+      if (receipt.status === 'ok' || receipt.status === 'queued') {
+        if (receipt.status === 'ok') {
+          sent++;
+        } else {
+          queued++;
+        }
+
         const nextHistory = {
           date: user.localDateStr,
           count: sentCountToday + 1,
           sentIds: [...sentIdsToday, selected.id].slice(-12),
           lastSentAt: now.toISOString(),
         };
+        const latestProfile = await this.prisma.profile.findUnique({
+          where: { userId: user.userId },
+          select: { preferencesJson: true },
+        });
         await this.prisma.profile.update({
           where: { userId: user.userId },
           data: {
             preferencesJson: {
-              ...user.preferencesJson,
+              ...((latestProfile?.preferencesJson as Record<string, any>) || user.preferencesJson),
               periodPushHistory: nextHistory,
             } as any,
           },
@@ -606,6 +620,7 @@ export class PeriodNotificationsService {
       trigger: forceNow ? 'manual' : 'cron',
       totalActivePeriodUsers: activeUsers.length,
       sent,
+      queued,
       skippedNoToken,
       skippedQuietOrHour,
       skippedDailyLimit,
@@ -644,35 +659,34 @@ export class PeriodNotificationsService {
       this.pickVariedMessage(config.messages, 1, []) ||
       DEFAULT_PERIOD_MESSAGES[0];
 
-    const pushToken = (user.profile?.preferencesJson as any)?.pushToken;
-    if (!pushToken) {
-      return {
-        status: 'no_push_token',
-        message: 'Kullanıcının kayıtlı Expo Push Token bilgisi yok (mobil uygulama içi kart ve yerel bildirim ile görüntülenir).',
-        preview: chosen,
-        user: {
-          id: user.id,
-          email: user.email,
-          displayName: user.profile?.displayName || user.email,
+    const receipt = await this.pushService.sendPush(
+      user.id,
+      {
+        to: '',
+        sound: 'default',
+        title: chosen.titleTr,
+        body: chosen.messageTr,
+        data: {
+          type: 'PERIOD_SUPPORT',
+          screen: 'home',
+          messageId: chosen.id,
+          test: true,
         },
-      };
-    }
-
-    const receipt = await this.pushService.sendPush(user.id, {
-      to: '',
-      sound: 'default',
-      title: chosen.titleTr,
-      body: chosen.messageTr,
-      data: {
-        type: 'PERIOD_SUPPORT',
-        screen: 'home',
-        messageId: chosen.id,
-        test: true,
       },
-    });
+      { ignoreQuietHours: true },
+    );
+
+    const statusMessage =
+      receipt.status === 'ok'
+        ? `Test push bildirimi ${user.email} kullanıcısına gönderildi.`
+        : receipt.status === 'queued'
+          ? `${user.email} kullanıcısının Expo Push Tokenı olmadığı için test bildirimi cihaz teslimat kuyruğuna eklendi (uygulama açıldığında/ön planda otomatik iletilecek).`
+          : receipt.message || 'Test bildirimi gönderilemedi.';
 
     return {
       status: receipt.status,
+      delivery: receipt.delivery,
+      message: statusMessage,
       receipt,
       preview: chosen,
       user: {

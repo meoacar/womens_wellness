@@ -63,6 +63,7 @@ export default function UserList() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string | undefined>();
   const [subFilter, setSubFilter] = useState<string | undefined>();
+  const [lifeStageFilter, setLifeStageFilter] = useState<string | undefined>();
   const [selectedRowKeys, setSelectedRowKeys] = useState<string[]>([]);
 
   const [bulkModal, setBulkModal] = useState<{ open: boolean; mode: BulkSendMode }>({
@@ -82,6 +83,7 @@ export default function UserList() {
       if (search.trim()) params.search = search.trim();
       if (statusFilter) params.status = statusFilter;
       if (subFilter) params.subscriptionStatus = subFilter;
+      if (lifeStageFilter) params.lifeStage = lifeStageFilter;
 
       const { data } = await apiClient.get('/admin/users/search', { params });
       setUsers(data?.data || []);
@@ -94,7 +96,7 @@ export default function UserList() {
     } finally {
       setLoading(false);
     }
-  }, [page, pageSize, sortBy, sortOrder, search, statusFilter, subFilter]);
+  }, [page, pageSize, sortBy, sortOrder, search, statusFilter, subFilter, lifeStageFilter]);
 
   useEffect(() => {
     fetchUsers();
@@ -161,8 +163,14 @@ export default function UserList() {
       'Yetki',
       'Abonelik',
       'PIN',
+      'Son IP',
+      'Cihaz Modeli',
+      'İşletim Sistemi',
+      'Uygulama Sürümü',
+      'Son Görülme',
       'Döngü',
       'Sohbet',
+      'Hata Kaydı',
       'Kayıt Tarihi',
     ];
     const escapeCsv = (val: unknown) => `"${String(val ?? '').replace(/"/g, '""')}"`;
@@ -178,8 +186,14 @@ export default function UserList() {
           u.isAdmin ? 'Admin' : 'Kullanıcı',
           u.subscription?.status || 'FREE',
           u.pinEnabled ? 'Aktif' : 'Pasif',
+          u.lastIpAddress || '',
+          u.lastDeviceModel || '',
+          u.lastOsVersion || '',
+          u.lastAppVersion || '',
+          u.lastSeenAt ? dayjs(u.lastSeenAt).format('YYYY-MM-DD HH:mm:ss') : '',
           u._count?.periodCycles ?? 0,
           u._count?.conversations ?? 0,
+          u._count?.errorLogs ?? 0,
           dayjs(u.createdAt).format('YYYY-MM-DD HH:mm'),
         ]
           .map(escapeCsv)
@@ -258,6 +272,8 @@ export default function UserList() {
           </Tag>
           {record.pinEnabled && <Tag color="blue">PIN</Tag>}
           {record.pregnancy?.isActive && <Tag color="magenta">Hamile</Tag>}
+          {record.profile?.lifeStage === 'POSTPARTUM' && <Tag color="volcano">Anne &amp; Bebek</Tag>}
+          {record.profile?.lifeStage === 'FERTILITY' && <Tag color="cyan">Doğurganlık</Tag>}
         </Space>
       ),
     },
@@ -286,6 +302,34 @@ export default function UserList() {
           </Space>
         );
       },
+    },
+    {
+      title: 'Cihaz / IP / Sürüm',
+      key: 'telemetry',
+      render: (_: any, record: any) => (
+        <div style={{ fontSize: 12, lineHeight: 1.5 }}>
+          <div>
+            <strong>IP:</strong>{' '}
+            {record.lastIpAddress ? (
+              <code>{record.lastIpAddress}</code>
+            ) : (
+              <span style={{ color: '#8c8c8c' }}>—</span>
+            )}
+          </div>
+          <div style={{ color: '#595959' }}>
+            {record.lastDeviceModel || '—'} · {record.lastOsVersion || '—'}
+          </div>
+          <Space size={4} wrap style={{ marginTop: 2 }}>
+            {record.lastAppVersion && <Tag color="geekblue">v{record.lastAppVersion}</Tag>}
+            {(record._count?.errorLogs ?? 0) > 0 && (
+              <Tag color="red">{record._count.errorLogs} hata</Tag>
+            )}
+            {(record._count?.refreshTokens ?? 0) > 0 && (
+              <Tag color="cyan">{record._count.refreshTokens} JWT</Tag>
+            )}
+          </Space>
+        </div>
+      ),
     },
     {
       title: 'Aktivite',
@@ -406,7 +450,7 @@ export default function UserList() {
       {/* Search & Filters */}
       <Space wrap style={{ marginBottom: 16 }}>
         <Input
-          placeholder="E-posta, kullanıcı adı veya isim ara..."
+          placeholder="E-posta, kullanıcı adı, isim veya IP/cihaz ara..."
           prefix={<SearchOutlined />}
           value={search}
           onChange={(e) => {
@@ -446,6 +490,22 @@ export default function UserList() {
             { label: 'Ücretsiz', value: 'FREE' },
             { label: 'Süresi Dolmuş', value: 'EXPIRED' },
             { label: 'İptal Edilmiş', value: 'CANCELLED' },
+          ]}
+        />
+        <Select
+          placeholder="Yaşam Evresi"
+          allowClear
+          value={lifeStageFilter}
+          onChange={(val) => {
+            setLifeStageFilter(val);
+            setPage(1);
+          }}
+          style={{ width: 165 }}
+          options={[
+            { label: 'Döngü (CYCLE)', value: 'CYCLE' },
+            { label: 'Doğurganlık (FERTILITY)', value: 'FERTILITY' },
+            { label: 'Hamilelik (PREGNANCY)', value: 'PREGNANCY' },
+            { label: 'Anne & Bebek (POSTPARTUM)', value: 'POSTPARTUM' },
           ]}
         />
         <Button icon={<ReloadOutlined />} onClick={fetchUsers}>
@@ -526,7 +586,7 @@ export default function UserList() {
           showSizeChanger: true,
           showTotal: (t, range) => `${range[0]}-${range[1]} / ${t} kullanıcı`,
         }}
-        scroll={{ x: 960 }}
+        scroll={{ x: 1220 }}
       />
 
       <BulkSendModal

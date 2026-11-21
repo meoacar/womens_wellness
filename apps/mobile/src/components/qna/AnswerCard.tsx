@@ -46,7 +46,9 @@ export function AnswerCard({
     const slideAnim = useRef(new Animated.Value(20)).current;
 
     const commentCount = Math.max(comments.length, answer._count?.comments || 0);
-    const isOwnAnswer = user?.id === answer.userId;
+    const isOwnAnswer = Boolean(
+        (answer as any)?.isOwner ?? (user?.id && answer.userId && user.id === answer.userId),
+    );
 
     // Fade in and slide up animation on mount
     useEffect(() => {

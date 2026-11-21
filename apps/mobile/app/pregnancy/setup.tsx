@@ -55,6 +55,7 @@ export default function PregnancySetupScreen() {
     onSuccess: async () => {
       await setPregnancyMode(true);
       queryClient.invalidateQueries({ queryKey: ['pregnancy'] });
+      queryClient.invalidateQueries({ queryKey: ['homeSnapshot'] });
       Alert.alert(
         'Başarılı',
         'Hamilelik kaydınız oluşturuldu!',
@@ -91,6 +92,12 @@ export default function PregnancySetupScreen() {
   const handleLmpDateChange = (event: any, selectedDate?: Date) => {
     if (Platform.OS === 'android') {
       setShowLmpPicker(false);
+      if (event?.type === 'dismissed' || !selectedDate) return;
+      setTempLmpDate(selectedDate);
+      setLmpDate(selectedDate);
+      setDueDate(calculateDueDate(selectedDate));
+      setLmpDateConfirmed(true);
+      return;
     }
     if (selectedDate) {
       setTempLmpDate(selectedDate);
@@ -100,6 +107,12 @@ export default function PregnancySetupScreen() {
   const handleDueDateChange = (event: any, selectedDate?: Date) => {
     if (Platform.OS === 'android') {
       setShowDuePicker(false);
+      if (event?.type === 'dismissed' || !selectedDate) return;
+      setTempDueDate(selectedDate);
+      setDueDate(selectedDate);
+      setLmpDate(calculateLmpDate(selectedDate));
+      setDueDateConfirmed(true);
+      return;
     }
     if (selectedDate) {
       setTempDueDate(selectedDate);

@@ -152,23 +152,34 @@ export class GamificationService {
         const localEnd = new Date(localStart);
         localEnd.setDate(localEnd.getDate() + 1);
 
+        const localMidnightUtc = new Date(
+            Date.UTC(localStart.getFullYear(), localStart.getMonth(), localStart.getDate(), 0, 0, 0, 0),
+        );
+        const queryDates =
+            localMidnightUtc.getTime() === start.getTime()
+                ? [start]
+                : [start, localMidnightUtc];
+        const minDate = localMidnightUtc.getTime() < start.getTime() ? localMidnightUtc : start;
+
         const gamification = await this.getUserGamification(userId);
 
         const [todayLog, waterLogs, stepsRecord, meditationCount, sleepRecord] = await Promise.all([
-            this.prisma.dailyLog.findUnique({
-                where: { userId_date: { userId, date: start } },
+            this.prisma.dailyLog.findFirst({
+                where: { userId, date: { in: queryDates } },
+                orderBy: { updatedAt: 'desc' },
             }),
             this.prisma.waterLog.findMany({
                 where: { userId, loggedAt: { gte: localStart, lt: localEnd } },
             }),
-            this.prisma.dailySteps.findUnique({
-                where: { userId_date: { userId, date: start } },
+            this.prisma.dailySteps.findFirst({
+                where: { userId, date: { in: queryDates } },
+                orderBy: { count: 'desc' },
             }),
             this.prisma.meditationSession.count({
-                where: { userId, date: { gte: start, lt: end } },
+                where: { userId, date: { gte: minDate, lt: end } },
             }),
             this.prisma.sleepLog.findFirst({
-                where: { userId, sleepDate: { gte: new Date(start.getTime() - 24 * 60 * 60 * 1000), lt: end } },
+                where: { userId, sleepDate: { gte: new Date(minDate.getTime() - 24 * 60 * 60 * 1000), lt: end } },
             }),
         ]);
 
@@ -201,7 +212,10 @@ export class GamificationService {
             {
                 id: 'water',
                 title: 'En Az 1 Litre Su',
-                description: `Bugün ${waterTotalMl} / 1000 ml içildi`,
+                description:
+                    waterTotalMl >= 1000
+                        ? `Bugün ${(waterTotalMl / 1000).toFixed(waterTotalMl % 1000 === 0 ? 0 : 1)} L (${waterTotalMl} ml) içildi`
+                        : `Bugün ${waterTotalMl} / 1000 ml içildi`,
                 xp: 10,
                 completed: waterTotalMl >= 1000,
                 actionRoute: '/water',
@@ -309,7 +323,7 @@ export class GamificationService {
             await this.prisma.waterLog.create({
                 data: {
                     userId,
-                    amountMl: 250,
+                    amountMl: 200,
                     loggedAt: new Date(),
                 },
             });

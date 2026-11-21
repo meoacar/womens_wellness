@@ -1,6 +1,10 @@
 import { Injectable, BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { SubscriptionStatus, SubscriptionTier } from '@prisma/client';
+import * as fs from 'fs';
+import * as path from 'path';
 import { PrismaService } from '../prisma/prisma.service';
+import { resolveUploadsDir } from '../common/utils/uploads';
+import type { ClientTelemetry } from '../common/utils/client-telemetry';
 
 @Injectable()
 export class UsersService {
@@ -64,8 +68,57 @@ export class UsersService {
     // Location and preferences
     if (data.timezone !== undefined) updateData.timezone = data.timezone;
     if (data.country !== undefined) updateData.country = data.country;
-    if (data.profilePictureUrl !== undefined) updateData.profilePictureUrl = data.profilePictureUrl;
-    if (data.preferencesJson !== undefined) updateData.preferencesJson = data.preferencesJson;
+    if (data.profilePictureUrl !== undefined) {
+      const localRelPath = this.extractLocalUploadRelativePath(data.profilePictureUrl);
+      if (localRelPath) {
+        const ownedFile = await this.prisma.uploadedFile.findUnique({
+          where: { relativePath: localRelPath },
+          select: { userId: true },
+        });
+        if (!ownedFile || ownedFile.userId !== userId) {
+          throw new BadRequestException('Invalid profilePictureUrl ownership');
+        }
+      }
+      updateData.profilePictureUrl = data.profilePictureUrl;
+    }
+    if (data.preferencesJson !== undefined) {
+      if (
+        data.preferencesJson === null ||
+        typeof data.preferencesJson !== 'object' ||
+        Array.isArray(data.preferencesJson)
+      ) {
+        throw new BadRequestException('Invalid preferencesJson format');
+      }
+
+      const RESERVED_SERVER_KEYS = new Set([
+        'partnerLink',
+        'pendingWinbackBanner',
+        'winbackRecoveredAt',
+      ]);
+
+      const existingPrefs =
+        currentProfile.preferencesJson &&
+        typeof currentProfile.preferencesJson === 'object' &&
+        !Array.isArray(currentProfile.preferencesJson)
+          ? (currentProfile.preferencesJson as Record<string, any>)
+          : {};
+
+      const sanitizedPrefs: Record<string, any> = {};
+      for (const [key, value] of Object.entries(data.preferencesJson as Record<string, any>)) {
+        if (!RESERVED_SERVER_KEYS.has(key)) {
+          sanitizedPrefs[key] = value;
+        }
+      }
+
+      // Preserve server-managed retention metadata; partner relationships never live in preferencesJson
+      for (const serverKey of ['pendingWinbackBanner', 'winbackRecoveredAt'] as const) {
+        if (existingPrefs[serverKey] !== undefined) {
+          sanitizedPrefs[serverKey] = existingPrefs[serverKey];
+        }
+      }
+
+      updateData.preferencesJson = sanitizedPrefs;
+    }
 
     // Handle date of birth
     if (data.dateOfBirth !== undefined) {
@@ -271,9 +324,27 @@ export class UsersService {
       this.prisma.meditationSession.aggregate({ where: { userId }, _sum: { durationMin: true } }),
     ]);
 
+    const currentMonthKey = new Date().toISOString().slice(0, 7);
+    const currentQuota = Array.isArray(user.usageQuota)
+      ? user.usageQuota.find((q) => q.monthKey === currentMonthKey)
+      : null;
+
+    const syncedSubscription = user.subscription
+      ? {
+          ...user.subscription,
+          aiMessagesUsed: currentQuota
+            ? currentQuota.aiRequests
+            : user.subscription.aiMessagesUsed,
+          aiMessagesLimit: currentQuota
+            ? currentQuota.limit
+            : user.subscription.aiMessagesLimit,
+        }
+      : null;
+
     const { password, pinHash, ...userWithoutSensitive } = user;
     return {
       ...userWithoutSensitive,
+      subscription: syncedSubscription,
       wellnessTotals: {
         totalWaterMl: waterAgg._sum.amountMl || 0,
         totalSteps: stepsAgg._sum.count || 0,
@@ -365,7 +436,17 @@ export class UsersService {
       if (data.profile.firstName !== undefined) profileData.firstName = data.profile.firstName;
       if (data.profile.lastName !== undefined) profileData.lastName = data.profile.lastName;
       if (data.profile.displayName !== undefined) profileData.displayName = data.profile.displayName;
-      if (data.profile.dateOfBirth !== undefined) profileData.dateOfBirth = data.profile.dateOfBirth ? new Date(data.profile.dateOfBirth) : null;
+      if (data.profile.dateOfBirth !== undefined) {
+        if (!data.profile.dateOfBirth) {
+          profileData.dateOfBirth = null;
+        } else {
+          const rawDob = String(data.profile.dateOfBirth).trim();
+          const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(rawDob);
+          profileData.dateOfBirth = dateOnly
+            ? new Date(Date.UTC(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]), 12, 0, 0))
+            : new Date(rawDob);
+        }
+      }
       if (data.profile.heightCm !== undefined) profileData.heightCm = data.profile.heightCm;
       if (data.profile.weightKg !== undefined) profileData.weightKg = data.profile.weightKg;
       if (data.profile.country !== undefined) profileData.country = data.profile.country;
@@ -379,6 +460,16 @@ export class UsersService {
           where: { id: userId },
           data: updateData,
         });
+
+        if (
+          updateData.password !== undefined ||
+          (updateData.status !== undefined && updateData.status !== 'ACTIVE')
+        ) {
+          await (tx as any).refreshToken?.updateMany?.({
+            where: { userId, revokedAt: null },
+            data: { revokedAt: new Date() },
+          });
+        }
       }
 
       if (Object.keys(profileData).length > 0) {
@@ -473,13 +564,166 @@ export class UsersService {
       },
     });
 
+    const monthKey = new Date().toISOString().slice(0, 7);
+    const nextMonthStart = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 1);
+
+    await this.prisma.usageQuota.upsert({
+      where: {
+        userId_monthKey: {
+          userId,
+          monthKey,
+        },
+      },
+      update: {
+        limit: aiMessagesLimit,
+        ...(body.resetAiUsage ? { aiRequests: 0 } : {}),
+      },
+      create: {
+        userId,
+        monthKey,
+        aiRequests: 0,
+        limit: aiMessagesLimit,
+        resetsAt: nextMonthStart,
+      },
+    });
+
     return this.getUserById(userId);
   }
 
-  async deleteUser(userId: string) {
-    await this.prisma.user.delete({
-      where: { id: userId },
+  private extractLocalUploadRelativePath(fileUrl?: string | null): string | null {
+    if (!fileUrl || typeof fileUrl !== 'string') return null;
+
+    let pathname = fileUrl.trim();
+    if (!pathname) return null;
+
+    if (pathname.startsWith('http://') || pathname.startsWith('https://')) {
+      try {
+        pathname = new URL(pathname).pathname;
+      } catch {
+        return null;
+      }
+    }
+
+    const uploadsPrefix = '/uploads/';
+    const prefixIdx = pathname.indexOf(uploadsPrefix);
+    if (prefixIdx === -1) return null;
+
+    const relative = pathname.slice(prefixIdx + uploadsPrefix.length).replace(/^\/+/, '');
+    if (!relative || relative.includes('..')) return null;
+    return relative;
+  }
+
+  async saveUploadedProfilePicture(
+    userId: string,
+    file: {
+      relativePath: string;
+      mimeType: string;
+      sizeBytes: number;
+      profilePictureUrl: string;
+    },
+  ) {
+    return this.prisma.$transaction(async (tx) => {
+      await tx.uploadedFile.create({
+        data: {
+          userId,
+          relativePath: file.relativePath,
+          mimeType: file.mimeType,
+          sizeBytes: file.sizeBytes,
+        },
+      });
+
+      return tx.profile.update({
+        where: { userId },
+        data: { profilePictureUrl: file.profilePictureUrl },
+      });
     });
+  }
+
+  private async removeOwnedUploadFiles(relativePaths: string[]): Promise<void> {
+    const uploadsRoot = path.resolve(resolveUploadsDir());
+    for (const relative of relativePaths) {
+      if (!relative || relative.includes('..') || path.isAbsolute(relative)) {
+        continue;
+      }
+      const resolvedPath = path.resolve(uploadsRoot, relative);
+      if (!resolvedPath.startsWith(`${uploadsRoot}${path.sep}`)) {
+        continue;
+      }
+      await fs.promises.unlink(resolvedPath).catch(() => undefined);
+    }
+  }
+
+  private async findUserSupportTicketFlags(userId: string) {
+    const ticketFlags = await this.prisma.featureFlag.findMany({
+      where: { key: { startsWith: 'support_ticket_' } },
+    });
+
+    return ticketFlags.filter((flag) => {
+      const val = flag.valueJson as Record<string, any> | null;
+      return Boolean(val && val.userId === userId);
+    });
+  }
+
+  async deleteUser(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        email: true,
+      },
+    });
+
+    if (!user) {
+      throw new NotFoundException('Kullanıcı bulunamadı');
+    }
+
+    // Delete only server-tracked files owned by this user, never trusting user-editable URLs
+    const [ownedFiles, userSupportTickets] = await Promise.all([
+      this.prisma.uploadedFile.findMany({
+        where: { userId },
+        select: { relativePath: true },
+      }),
+      this.findUserSupportTicketFlags(userId),
+      this.prisma.kvkkConsentLog
+        ? this.prisma.kvkkConsentLog.findMany({
+            where: { userId },
+            orderBy: { consentedAt: 'desc' },
+          })
+        : Promise.resolve([]),
+    ]);
+
+    const ownedRelativePaths = ownedFiles.map((f) => f.relativePath);
+    const supportTicketKeys = userSupportTickets.map((f) => f.key);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.auditLog.deleteMany({
+        where: {
+          OR: [{ userId }, { entity: 'User', entityId: userId }],
+        },
+      });
+
+      if (user.email) {
+        await tx.passwordResetToken.deleteMany({
+          where: { email: user.email },
+        });
+      }
+
+      if (supportTicketKeys.length > 0) {
+        await tx.featureFlag.deleteMany({
+          where: { key: { in: supportTicketKeys } },
+        });
+      }
+
+      await tx.uploadedFile.deleteMany({
+        where: { userId },
+      });
+
+      await tx.user.delete({
+        where: { id: userId },
+      });
+    });
+
+    await this.removeOwnedUploadFiles(ownedRelativePaths);
 
     return { success: true };
   }
@@ -489,7 +733,13 @@ export class UsersService {
     const [
       user,
       healthMetrics,
+      dailyLogs,
       waterLogs,
+      stepsLogs,
+      dailySteps,
+      sleepLogs,
+      meditationSessions,
+      wellnessPreferences,
       cycles,
       pregnancy,
       reminders,
@@ -497,6 +747,25 @@ export class UsersService {
       messages,
       memories,
       usageQuota,
+      birthChartProfile,
+      gamification,
+      userAchievements,
+      insights,
+      homePreferences,
+      contentPreferences,
+      articleInteractions,
+      questions,
+      answers,
+      questionComments,
+      answerComments,
+      answerVotes,
+      questionFavorites,
+      questionFollowers,
+      partnerLinkAsOwner,
+      partnerLinkAsPartner,
+      partnerInvite,
+      supportTicketFlags,
+      kvkkConsentLogs,
     ] = await Promise.all([
       this.prisma.user.findUnique({
         where: { id: userId },
@@ -509,9 +778,32 @@ export class UsersService {
         where: { userId },
         orderBy: { createdAt: 'desc' },
       }),
+      this.prisma.dailyLog.findMany({
+        where: { userId },
+        orderBy: { date: 'desc' },
+      }),
       this.prisma.waterLog.findMany({
         where: { userId },
         orderBy: { loggedAt: 'desc' },
+      }),
+      this.prisma.stepsLog.findMany({
+        where: { userId },
+        orderBy: { loggedAt: 'desc' },
+      }),
+      this.prisma.dailySteps.findMany({
+        where: { userId },
+        orderBy: { date: 'desc' },
+      }),
+      this.prisma.sleepLog.findMany({
+        where: { userId },
+        orderBy: { sleepDate: 'desc' },
+      }),
+      this.prisma.meditationSession.findMany({
+        where: { userId },
+        orderBy: { date: 'desc' },
+      }),
+      this.prisma.wellnessPreferences.findUnique({
+        where: { userId },
       }),
       this.prisma.periodCycle.findMany({
         where: { userId },
@@ -520,6 +812,15 @@ export class UsersService {
       this.prisma.pregnancy.findMany({
         where: { userId },
         orderBy: { dueDate: 'desc' },
+        include: {
+          kickCounts: { orderBy: { sessionDate: 'desc' } },
+          contractions: { orderBy: { startTime: 'desc' } },
+          appointments: { orderBy: { appointmentAt: 'desc' } },
+          medications: { orderBy: { createdAt: 'desc' } },
+          birthPlan: true,
+          hospitalBagItems: { orderBy: { sortOrder: 'asc' } },
+          pregnancyNotes: { orderBy: { createdAt: 'desc' } },
+        },
       }),
       this.prisma.reminder.findMany({
         where: { userId },
@@ -540,6 +841,74 @@ export class UsersService {
       this.prisma.usageQuota.findUnique({
         where: { userId },
       }),
+      this.prisma.birthChartProfile.findUnique({
+        where: { userId },
+      }),
+      this.prisma.userGamification.findUnique({
+        where: { userId },
+      }),
+      this.prisma.userAchievement.findMany({
+        where: { userId },
+        include: { achievement: true },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.userInsight.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.userHomePreferences.findUnique({
+        where: { userId },
+      }),
+      this.prisma.userContentPreferences.findUnique({
+        where: { userId },
+      }),
+      this.prisma.articleInteraction.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.question.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.answer.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.questionComment.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.answerComment.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.answerVote.findMany({
+        where: { userId },
+      }),
+      this.prisma.questionFavorite.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.questionFollower.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.partnerLink.findUnique({
+        where: { ownerUserId: userId },
+      }),
+      this.prisma.partnerLink.findUnique({
+        where: { partnerUserId: userId },
+      }),
+      this.prisma.partnerInvite.findUnique({
+        where: { ownerUserId: userId },
+      }),
+      this.findUserSupportTicketFlags(userId),
+      this.prisma.kvkkConsentLog
+        ? this.prisma.kvkkConsentLog.findMany({
+            where: { userId },
+            orderBy: { consentedAt: 'desc' },
+          })
+        : Promise.resolve([]),
     ]);
 
     if (!user) {
@@ -551,10 +920,16 @@ export class UsersService {
 
     return {
       exportDate: new Date().toISOString(),
-      exportVersion: '1.0',
+      exportVersion: '1.1',
       user: userWithoutSensitive,
       healthMetrics,
+      dailyLogs,
       waterLogs,
+      stepsLogs,
+      dailySteps,
+      sleepLogs,
+      meditationSessions,
+      wellnessPreferences,
       cycles,
       pregnancy,
       reminders,
@@ -562,6 +937,29 @@ export class UsersService {
       messages,
       memories,
       usageQuota,
+      birthChartProfile,
+      gamification,
+      userAchievements,
+      insights,
+      homePreferences,
+      contentPreferences,
+      articleInteractions,
+      qna: {
+        questions,
+        answers,
+        questionComments,
+        answerComments,
+        answerVotes,
+        questionFavorites,
+        questionFollowers,
+      },
+      partner: {
+        linkedAsOwner: partnerLinkAsOwner,
+        linkedAsPartner: partnerLinkAsPartner,
+        activeInvite: partnerInvite,
+      },
+      supportTickets: supportTicketFlags.map((f) => f.valueJson),
+      kvkkConsentLogs,
     };
   }
 
@@ -683,10 +1081,14 @@ export class UsersService {
     // Hash new password
     const password = await bcrypt.hash(newPassword, 10);
 
-    // Update password
+    // Update password and revoke active refresh tokens
     await this.prisma.user.update({
       where: { id: userId },
       data: { password },
+    });
+    await (this.prisma as any).refreshToken?.updateMany?.({
+      where: { userId, revokedAt: null },
+      data: { revokedAt: new Date() },
     });
 
     return { success: true, message: 'Şifre başarıyla değiştirildi' };
@@ -758,5 +1160,81 @@ export class UsersService {
       action,
       bonusGranted,
     };
+  }
+
+  async recordKvkkConsentHistory(
+    userId: string,
+    consents: Record<string, any>,
+    telemetry?: ClientTelemetry,
+  ) {
+    if (!this.prisma.kvkkConsentLog || !consents || typeof consents !== 'object') {
+      return { recorded: 0 };
+    }
+
+    const now = new Date();
+    const mapping: Array<{ field: string; consentType: string }> = [
+      { field: 'dataProcessing', consentType: 'DATA_PROCESSING' },
+      { field: 'privacyPolicyAccepted', consentType: 'PRIVACY_POLICY_AND_TERMS' },
+      { field: 'aiMemoryConsent', consentType: 'AI_MEMORY' },
+      { field: 'marketingConsent', consentType: 'MARKETING' },
+      { field: 'analyticsConsent', consentType: 'ANALYTICS' },
+      { field: 'thirdPartyConsent', consentType: 'THIRD_PARTY' },
+    ];
+
+    const rows = mapping
+      .filter(({ field }) => typeof consents[field] === 'boolean')
+      .map(({ field, consentType }) => ({
+        userId,
+        consentType,
+        granted: Boolean(consents[field]),
+        version: String(consents.version || '1.0'),
+        source: String(consents.source || 'SETTINGS'),
+        ipAddress: telemetry?.ipAddress,
+        deviceModel: telemetry?.deviceModel,
+        osVersion: telemetry?.osVersion,
+        appVersion: telemetry?.appVersion,
+        consentedAt: now,
+      }));
+
+    if (rows.length === 0) {
+      return { recorded: 0 };
+    }
+
+    await this.prisma.kvkkConsentLog.createMany({ data: rows });
+    return { recorded: rows.length };
+  }
+
+  async recordClientError(
+    userId: string | undefined,
+    payload: {
+      message: string;
+      stack?: string;
+      path?: string;
+      level?: string;
+      metadataJson?: any;
+    },
+    telemetry?: ClientTelemetry,
+  ) {
+    if (!this.prisma.userErrorLog || !payload?.message?.trim()) {
+      return { logged: false };
+    }
+
+    await this.prisma.userErrorLog.create({
+      data: {
+        userId: userId || null,
+        source: 'MOBILE',
+        level: payload.level || 'ERROR',
+        path: payload.path ? String(payload.path).slice(0, 200) : null,
+        message: String(payload.message).slice(0, 500),
+        stack: payload.stack ? String(payload.stack).slice(0, 2000) : null,
+        ipAddress: telemetry?.ipAddress,
+        deviceModel: telemetry?.deviceModel,
+        osVersion: telemetry?.osVersion,
+        appVersion: telemetry?.appVersion,
+        metadataJson: payload.metadataJson || undefined,
+      },
+    });
+
+    return { logged: true };
   }
 }

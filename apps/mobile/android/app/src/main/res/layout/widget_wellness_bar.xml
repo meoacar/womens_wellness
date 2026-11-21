@@ -1,0 +1,152 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+  android:id="@+id/wellness_widget_root"
+  android:layout_width="match_parent"
+  android:layout_height="match_parent"
+  android:background="@drawable/widget_wellness_bg"
+  android:orientation="horizontal"
+  android:padding="12dp">
+
+  <!-- Water Section -->
+  <LinearLayout
+    android:id="@+id/wellness_water_box"
+    android:layout_width="0dp"
+    android:layout_height="match_parent"
+    android:layout_marginEnd="6dp"
+    android:layout_weight="1"
+    android:background="@drawable/widget_tile_bg"
+    android:gravity="center_vertical"
+    android:orientation="vertical"
+    android:paddingHorizontal="12dp"
+    android:paddingVertical="8dp">
+
+    <LinearLayout
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:gravity="center_vertical"
+      android:orientation="horizontal">
+
+      <TextView
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:text="💧 Su"
+        android:textColor="#0284C7"
+        android:textSize="12sp"
+        android:textStyle="bold" />
+
+      <TextView
+        android:id="@+id/wellness_water_pct"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="%0"
+        android:textColor="#0369A1"
+        android:textSize="11sp"
+        android:textStyle="bold" />
+    </LinearLayout>
+
+    <TextView
+      android:id="@+id/wellness_water_val"
+      android:layout_width="wrap_content"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="4dp"
+      android:ellipsize="end"
+      android:maxLines="1"
+      android:text="0 ml"
+      android:textColor="#0F172A"
+      android:textSize="16sp"
+      android:textStyle="bold" />
+
+    <TextView
+      android:id="@+id/wellness_water_sub"
+      android:layout_width="wrap_content"
+      android:layout_height="wrap_content"
+      android:ellipsize="end"
+      android:maxLines="1"
+      android:text="/ 2.000 ml"
+      android:textColor="#64748B"
+      android:textSize="10.5sp" />
+
+    <ProgressBar
+      android:id="@+id/wellness_water_bar"
+      style="?android:attr/progressBarStyleHorizontal"
+      android:layout_width="match_parent"
+      android:layout_height="6dp"
+      android:layout_marginTop="6dp"
+      android:max="100"
+      android:progress="0"
+      android:progressDrawable="@drawable/widget_progress_water" />
+  </LinearLayout>
+
+  <!-- Steps Section -->
+  <LinearLayout
+    android:id="@+id/wellness_steps_box"
+    android:layout_width="0dp"
+    android:layout_height="match_parent"
+    android:layout_marginStart="6dp"
+    android:layout_weight="1"
+    android:background="@drawable/widget_tile_bg"
+    android:gravity="center_vertical"
+    android:orientation="vertical"
+    android:paddingHorizontal="12dp"
+    android:paddingVertical="8dp">
+
+    <LinearLayout
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:gravity="center_vertical"
+      android:orientation="horizontal">
+
+      <TextView
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:text="👣 Adım"
+        android:textColor="#059669"
+        android:textSize="12sp"
+        android:textStyle="bold" />
+
+      <TextView
+        android:id="@+id/wellness_steps_pct"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="%0"
+        android:textColor="#047857"
+        android:textSize="11sp"
+        android:textStyle="bold" />
+    </LinearLayout>
+
+    <TextView
+      android:id="@+id/wellness_steps_val"
+      android:layout_width="wrap_content"
+      android:layout_height="wrap_content"
+      android:layout_marginTop="4dp"
+      android:ellipsize="end"
+      android:maxLines="1"
+      android:text="0"
+      android:textColor="#0F172A"
+      android:textSize="16sp"
+      android:textStyle="bold" />
+
+    <TextView
+      android:id="@+id/wellness_steps_sub"
+      android:layout_width="wrap_content"
+      android:layout_height="wrap_content"
+      android:ellipsize="end"
+      android:maxLines="1"
+      android:text="/ 7.000 adım"
+      android:textColor="#64748B"
+      android:textSize="10.5sp" />
+
+    <ProgressBar
+      android:id="@+id/wellness_steps_bar"
+      style="?android:attr/progressBarStyleHorizontal"
+      android:layout_width="match_parent"
+      android:layout_height="6dp"
+      android:layout_marginTop="6dp"
+      android:max="100"
+      android:progress="0"
+      android:progressDrawable="@drawable/widget_progress_steps" />
+  </LinearLayout>
+
+</LinearLayout>

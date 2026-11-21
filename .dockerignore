@@ -50,6 +50,3 @@ logs
 README.md
 *.md
 !apps/*/README.md
-
-# Prisma
-**/prisma/migrations

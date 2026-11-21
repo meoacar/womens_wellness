@@ -149,6 +149,8 @@ export class RetentionService {
               preferencesJson: true,
             },
           },
+          partnerLinkAsOwner: { select: { id: true } },
+          partnerLinkAsPartner: { select: { id: true } },
           _count: {
             select: {
               periodCycles: true,
@@ -186,7 +188,7 @@ export class RetentionService {
 
     for (const u of allActiveUsers) {
       const prefs = ((u.profile?.preferencesJson as Record<string, any>) || {});
-      if (prefs.pushToken || prefs.partnerLink) {
+      if (prefs.pushToken || u.partnerLinkAsOwner || u.partnerLinkAsPartner) {
         partnerOrPushUsers++;
       }
       if (prefs.winbackRecoveredAt) {
@@ -387,6 +389,7 @@ export class RetentionService {
       profile: { preferencesJson: any } | null;
     },
     rule: WinbackTierConfig,
+    ignoreQuietHours = false,
   ) {
     const now = new Date();
     const todayStr = now.toISOString().slice(0, 10);
@@ -396,19 +399,23 @@ export class RetentionService {
     let emailed = false;
     let bannerQueued = false;
 
-    if (rule.sendPush && prefs.pushToken) {
-      const res = await this.pushService.sendPush(user.id, {
-        to: '',
-        sound: 'default',
-        title: rule.titleTr,
-        body: rule.bodyTr,
-        data: {
-          type: 'WINBACK',
-          screen: rule.ctaScreen,
-          tierId: rule.id,
+    if (rule.sendPush) {
+      const res = await this.pushService.sendPush(
+        user.id,
+        {
+          to: '',
+          sound: 'default',
+          title: rule.titleTr,
+          body: rule.bodyTr,
+          data: {
+            type: 'WINBACK',
+            screen: rule.ctaScreen,
+            tierId: rule.id,
+          },
         },
-      });
-      if (res.status === 'ok') pushed = true;
+        { ignoreQuietHours },
+      );
+      if (res.status === 'ok' || res.status === 'queued') pushed = true;
     }
 
     if (rule.sendEmail && user.email) {
@@ -420,8 +427,15 @@ export class RetentionService {
       }
     }
 
+    const latestProfile = user.profile
+      ? await this.prisma.profile.findUnique({
+          where: { userId: user.id },
+          select: { preferencesJson: true },
+        })
+      : null;
+
     const nextPrefs: Record<string, any> = {
-      ...prefs,
+      ...((latestProfile?.preferencesJson as Record<string, any>) || prefs),
       winbackLastSent: {
         tierId: rule.id,
         date: todayStr,
@@ -492,7 +506,7 @@ export class RetentionService {
       active: true,
     };
 
-    const result = await this.deliverRuleToUser(user, rule);
+    const result = await this.deliverRuleToUser(user, rule, true);
     return {
       userId: user.id,
       email: user.email,

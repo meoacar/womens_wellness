@@ -1,4 +1,10 @@
-import { Injectable, Inject, forwardRef } from '@nestjs/common';
+import {
+  Injectable,
+  Inject,
+  forwardRef,
+  BadRequestException,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { PredictionService } from './prediction.service';
 import { GamificationService } from '../gamification/gamification.service';
@@ -41,6 +47,31 @@ export class CyclesService {
   ) { }
 
   /**
+   * Parse YYYY-MM-DD or ISO date string to local/server midnight without day drift
+   */
+  private parseCalendarDate(value: string): Date {
+    const trimmed = (value || '').trim();
+    const dateOnlyMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(trimmed);
+    if (dateOnlyMatch) {
+      const [, y, m, d] = dateOnlyMatch;
+      return new Date(Number(y), Number(m) - 1, Number(d), 0, 0, 0, 0);
+    }
+    const parsed = new Date(trimmed);
+    if (Number.isNaN(parsed.getTime())) {
+      throw new BadRequestException('Geçersiz tarih formatı.');
+    }
+    parsed.setHours(0, 0, 0, 0);
+    return parsed;
+  }
+
+  private toDateKey(date: Date): string {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+
+  /**
    * Create a new period cycle
    */
   async createCycle(
@@ -52,11 +83,42 @@ export class CyclesService {
       notes?: string;
     },
   ) {
+    const startDate = this.parseCalendarDate(data.startDate);
+    const endDate = data.endDate ? this.parseCalendarDate(data.endDate) : null;
+
+    if (endDate && endDate < startDate) {
+      throw new BadRequestException('Bitiş tarihi başlangıç tarihinden önce olamaz.');
+    }
+
+    // Avoid duplicate cycles starting on the same calendar day
+    const dayEnd = new Date(startDate);
+    dayEnd.setHours(23, 59, 59, 999);
+    const existingSameDay = await this.prisma.periodCycle.findFirst?.({
+      where: {
+        userId,
+        startDate: { gte: startDate, lte: dayEnd },
+      },
+    });
+
+    if (existingSameDay) {
+      if (endDate || data.notes !== undefined || data.symptoms) {
+        return this.prisma.periodCycle.update({
+          where: { id: existingSameDay.id },
+          data: {
+            ...(endDate ? { endDate } : {}),
+            ...(data.symptoms ? { symptomsJson: data.symptoms as any } : {}),
+            ...(data.notes !== undefined ? { notes: data.notes } : {}),
+          },
+        });
+      }
+      return existingSameDay;
+    }
+
     return this.prisma.periodCycle.create({
       data: {
         userId,
-        startDate: new Date(data.startDate),
-        endDate: data.endDate ? new Date(data.endDate) : null,
+        startDate,
+        endDate,
         symptomsJson: (data.symptoms || {}) as any,
         notes: data.notes,
       },
@@ -71,19 +133,43 @@ export class CyclesService {
     cycleId: string,
     data: {
       startDate?: string;
-      endDate?: string;
+      endDate?: string | null;
       symptoms?: PeriodSymptoms;
       notes?: string;
     },
   ) {
+    const existing = await this.prisma.periodCycle.findUnique({
+      where: { id: cycleId },
+    });
+
+    if (!existing || existing.userId !== userId) {
+      throw new NotFoundException('Regl kaydı bulunamadı.');
+    }
+
+    const nextStart = data.startDate
+      ? this.parseCalendarDate(data.startDate)
+      : this.parseCalendarDate(this.toDateKey(new Date(existing.startDate)));
+    const nextEnd =
+      data.endDate === null
+        ? null
+        : data.endDate !== undefined
+          ? this.parseCalendarDate(data.endDate)
+          : existing.endDate
+            ? this.parseCalendarDate(this.toDateKey(new Date(existing.endDate)))
+            : null;
+
+    if (nextEnd && nextEnd < nextStart) {
+      throw new BadRequestException('Bitiş tarihi başlangıç tarihinden önce olamaz.');
+    }
+
     return this.prisma.periodCycle.update({
       where: {
         id: cycleId,
-        userId, // Ensure user owns this cycle
+        userId,
       },
       data: {
-        ...(data.startDate && { startDate: new Date(data.startDate) }),
-        ...(data.endDate && { endDate: new Date(data.endDate) }),
+        ...(data.startDate ? { startDate: nextStart } : {}),
+        ...(data.endDate !== undefined ? { endDate: nextEnd } : {}),
         ...(data.symptoms && { symptomsJson: data.symptoms as any }),
         ...(data.notes !== undefined && { notes: data.notes }),
       },
@@ -253,6 +339,36 @@ export class CyclesService {
       });
     }
 
+    // Compute personal average period length from up to 6 completed cycles (fallback: 5 days)
+    const completedCycles = await this.prisma.periodCycle.findMany({
+      where: { userId, endDate: { not: null } },
+      orderBy: { startDate: 'desc' },
+      take: 6,
+      select: { startDate: true, endDate: true },
+    });
+    const completedLengths = completedCycles
+      .map((c) => {
+        const s = new Date(c.startDate);
+        const e = new Date(c.endDate!);
+        s.setHours(0, 0, 0, 0);
+        e.setHours(0, 0, 0, 0);
+        return Math.round((e.getTime() - s.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+      })
+      .filter((len) => len >= 1 && len <= 12);
+    const assumedPeriodLength =
+      completedLengths.length > 0
+        ? Math.min(
+            10,
+            Math.max(
+              2,
+              Math.round(
+                completedLengths.reduce((acc, len) => acc + len, 0) /
+                  completedLengths.length,
+              ),
+            ),
+          )
+        : 5;
+
     // Build calendar data
     const days: Array<{
       date: Date;
@@ -261,6 +377,11 @@ export class CyclesService {
       isPredicted: boolean;
       isOvulation: boolean;
       cycleDay?: number;
+      cycleId?: string;
+      cycleStartDate?: string;
+      cycleEndDate?: string | null;
+      isCycleStart?: boolean;
+      isCycleEnd?: boolean;
       markers: string[];
       dailyLog?: any;
     }> = [];
@@ -270,10 +391,14 @@ export class CyclesService {
       const dateKey = date.toISOString().split('T')[0];
       let isPeriod = false;
       let cycleDay: number | undefined;
+      let cycleId: string | undefined;
+      let cycleStartDate: string | undefined;
+      let cycleEndDate: string | null | undefined;
+      let isCycleStart = false;
+      let isCycleEnd = false;
       const markers: string[] = [];
 
       // Check if this day is within any cycle's period days
-      // Assume typical period lasts 3-7 days (default: 5 days if no end date)
       for (const cycle of cycles) {
         const start = new Date(cycle.startDate);
         start.setHours(0, 0, 0, 0);
@@ -283,9 +408,9 @@ export class CyclesService {
           end = new Date(cycle.endDate);
           end.setHours(0, 0, 0, 0);
         } else {
-          // If no end date, assume 5-day period
+          // If no end date yet, use personal average period length (default: 5 days)
           end = new Date(start);
-          end.setDate(end.getDate() + 4); // 5 days total (start + 4)
+          end.setDate(end.getDate() + assumedPeriodLength - 1);
         }
 
         const dateNormalized = new Date(date);
@@ -293,9 +418,13 @@ export class CyclesService {
 
         if (dateNormalized >= start && dateNormalized <= end) {
           isPeriod = true;
+          cycleId = cycle.id;
+          cycleStartDate = this.toDateKey(start);
+          cycleEndDate = cycle.endDate ? this.toDateKey(end) : null;
+          isCycleStart = dateNormalized.getTime() === start.getTime();
+          isCycleEnd = Boolean(cycle.endDate) && dateNormalized.getTime() === end.getTime();
           markers.push('period');
           cycleDay = this.predictionService.getCycleDay(dateNormalized, start);
-          console.log(`  🩸 Day ${day}: PERIOD (cycle ${cycle.id.slice(0, 8)}, days ${start.toISOString().split('T')[0]} to ${end.toISOString().split('T')[0]})`);
           break;
         }
       }
@@ -346,6 +475,7 @@ export class CyclesService {
         isPredicted,
         isOvulation,
         cycleDay,
+        ...(cycleId ? { cycleId, cycleStartDate, cycleEndDate, isCycleStart, isCycleEnd } : {}),
         markers,
         dailyLog: dailyLog || undefined,
       });
@@ -357,6 +487,7 @@ export class CyclesService {
       days,
       cycles,
       prediction,
+      assumedPeriodLength,
     };
   }
 
@@ -948,7 +1079,7 @@ export class CyclesService {
       const todayMidnight = new Date();
       todayMidnight.setHours(0, 0, 0, 0);
 
-      let cursorStart = new Date(latestStart);
+      const cursorStart = new Date(latestStart);
       cursorStart.setHours(0, 0, 0, 0);
       while (cursorStart.getTime() <= todayMidnight.getTime()) {
         cursorStart.setDate(cursorStart.getDate() + avgCycleLen);

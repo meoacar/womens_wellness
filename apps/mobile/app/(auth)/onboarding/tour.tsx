@@ -16,6 +16,7 @@ import { useAuthStore } from '@/store/authStore';
 import { StepContainer } from '@/components/onboarding/StepContainer';
 import { StepButtons } from '@/components/onboarding/StepButtons';
 import { authService, cyclesService, userService } from '@/services/api';
+import { parseBirthDateSafe, toBirthDateIsoNoon } from '@/utils/astrology';
 
 const TOTAL_STEPS = 6;
 
@@ -95,7 +96,8 @@ export default function TourStep() {
 
     setLoading(true);
     try {
-      const birthDateIso = new Date(data.birthDate).toISOString();
+      const parsedDob = parseBirthDateSafe(data.birthDate) || new Date(data.birthDate);
+      const birthDateIso = toBirthDateIsoNoon(parsedDob);
 
       const response = await authService.register({
         email: data.email,
@@ -104,6 +106,16 @@ export default function TourStep() {
         firstName: data.firstName,
         lastName: data.lastName,
         dateOfBirth: birthDateIso,
+        kvkkConsents: {
+          acceptPrivacy: data.acceptPrivacy ?? true,
+          privacyAcceptedAt: data.privacyAcceptedAt || new Date().toISOString(),
+          aiMemoryOptIn: Boolean(data.aiMemoryOptIn),
+          aiMemoryAcceptedAt: data.aiMemoryOptIn
+            ? data.aiMemoryAcceptedAt || new Date().toISOString()
+            : undefined,
+          version: '1.0',
+          source: 'ONBOARDING',
+        },
       });
 
       await setAuth(response.user, {

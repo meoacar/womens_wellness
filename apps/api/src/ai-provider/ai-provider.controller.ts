@@ -7,6 +7,7 @@ import {
     Body,
     Param,
     UseGuards,
+    NotFoundException,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { AdminGuard } from '../common/guards/admin.guard';
@@ -37,11 +38,16 @@ export class AIProviderController {
         }));
     }
 
+    @Get('runtime/status')
+    async getRuntimeStatus() {
+        return this.aiProviderService.getRuntimeStatus();
+    }
+
     @Get(':provider')
     async getOne(@Param('provider') provider: AIProvider) {
         const config = await this.aiProviderService.getByProvider(provider);
         if (!config) {
-            return null;
+            throw new NotFoundException(`AI sağlayıcı bulunamadı: ${provider}`);
         }
         return {
             ...config,
@@ -80,8 +86,11 @@ export class AIProviderController {
     }
 
     @Post(':provider/test')
-    async testConnection(@Param('provider') provider: AIProvider) {
-        return this.aiProviderService.testConnection(provider);
+    async testConnection(
+        @Param('provider') provider: AIProvider,
+        @Body() body?: { prompt?: string },
+    ) {
+        return this.aiProviderService.testConnection(provider, body?.prompt);
     }
 
     @Delete(':provider')

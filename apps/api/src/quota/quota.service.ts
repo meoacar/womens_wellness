@@ -204,7 +204,7 @@ export class QuotaService {
   async increment(userId: string) {
     const quota = await this.getOrCreateQuota(userId);
 
-    await this.prisma.usageQuota.update({
+    const updatedQuota = await this.prisma.usageQuota.update({
       where: { id: quota.id },
       data: {
         aiRequests: {
@@ -212,6 +212,13 @@ export class QuotaService {
         },
       },
     });
+
+    await this.prisma.subscription
+      .updateMany({
+        where: { userId },
+        data: { aiMessagesUsed: updatedQuota.aiRequests },
+      })
+      .catch(() => {});
   }
 
   async getStatus(userId: string) {

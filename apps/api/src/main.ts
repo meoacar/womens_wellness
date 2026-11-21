@@ -7,37 +7,13 @@ import { join } from 'path';
 import fastifyStatic from '@fastify/static';
 import fastifyMultipart from '@fastify/multipart';
 import fastifyCors from '@fastify/cors';
-// Monitoring imports (will be enabled after package installation)
-// import * as Sentry from '@sentry/node';
-// import { ProfilingIntegration } from '@sentry/profiling-node';
+import { createCorsOriginValidator, resolveAllowedOrigins } from './common/utils/cors';
+import { resolveUploadsDir } from './common/utils/uploads';
+import { initApiSentry } from './common/monitoring/sentry';
 
-// Initialize Sentry as early as possible (will be enabled after package installation)
-// const SENTRY_DSN = process.env.SENTRY_DSN;
-// if (SENTRY_DSN && SENTRY_DSN !== '__OPTIONAL__') {
-//   Sentry.init({
-//     dsn: SENTRY_DSN,
-//     environment: process.env.NODE_ENV || 'development',
-//     tracesSampleRate: process.env.NODE_ENV === 'production' ? 0.1 : 1.0,
-//     profilesSampleRate: process.env.NODE_ENV === 'production' ? 0.1 : 1.0,
-//     integrations: [new ProfilingIntegration()],
-//     beforeSend(event) {
-//       // Filter sensitive data
-//       if (event.request) {
-//         delete event.request.cookies;
-//         if (event.request.headers) {
-//           delete event.request.headers.authorization;
-//           delete event.request.headers.cookie;
-//         }
-//       }
-//       if (event.user) {
-//         delete event.user.email;
-//         delete event.user.ip_address;
-//       }
-//       return event;
-//     },
-//   });
-//   console.log('✅ Sentry initialized');
-// }
+if (initApiSentry()) {
+  console.log('✅ Sentry error monitoring initialized');
+}
 
 async function bootstrap() {
   // Validate critical environment variables
@@ -79,35 +55,40 @@ async function bootstrap() {
     }),
   );
 
-  // Register CORS plugin
-  const allowedOrigins = process.env.CORS_ALLOWED_ORIGINS?.split(',') || [
-    'http://localhost:3000',
-    'http://localhost:3001',
-    'http://localhost:8081',
-  ];
+  // Register CORS plugin with strict origin allowlist
+  const allowedOrigins = resolveAllowedOrigins();
 
   await app.register(fastifyCors as any, {
-    origin: true, // Reflect the request origin (validates against allowedOrigins in production via env)
+    origin: createCorsOriginValidator(allowedOrigins),
     credentials: true,
     methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'Accept',
+      'X-Device-Model',
+      'X-OS-Version',
+      'X-App-Version',
+      'X-Platform',
+    ],
   });
 
   // Register multipart for file uploads
   await app.register(fastifyMultipart as any, {
     limits: {
-      fileSize: 5 * 1024 * 1024, // 5MB
+      fileSize: 10 * 1024 * 1024, // 10MB
     },
   });
 
-  // Serve static files (profile pictures, etc.)
-  // In development: __dirname is dist/, so .. goes to project root
-  // In production: adjust path as needed
-  const uploadsPath = join(process.cwd(), 'uploads');
+  // Serve static files (profile pictures, etc.) from persistent uploads root
+  const uploadsPath = resolveUploadsDir();
   await app.register(fastifyStatic as any, {
     root: uploadsPath,
     prefix: '/uploads/',
     decorateReply: false,
+    setHeaders: (res: any) => {
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+    },
   });
 
   // Serve public files (HTML pages, etc.)
@@ -118,22 +99,29 @@ async function bootstrap() {
     decorateReply: false,
   });
 
-  // Swagger/OpenAPI Documentation
-  const config = new DocumentBuilder()
-    .setTitle('Wellness API')
-    .setDescription("Women's Wellness Companion API")
-    .setVersion('1.0')
-    .addBearerAuth()
-    .build();
-
-  const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api/docs', app, document);
-
   const port = process.env.PORT || 4000;
+  const swaggerEnabled =
+    process.env.NODE_ENV !== 'production' || process.env.ENABLE_SWAGGER === 'true';
+
+  if (swaggerEnabled) {
+    // Swagger/OpenAPI Documentation (disabled in production by default)
+    const config = new DocumentBuilder()
+      .setTitle('Wellness API')
+      .setDescription("Women's Wellness Companion API")
+      .setVersion('1.0')
+      .addBearerAuth()
+      .build();
+
+    const document = SwaggerModule.createDocument(app, config);
+    SwaggerModule.setup('api/docs', app, document);
+  }
+
   await app.listen(port, '0.0.0.0');
 
   console.log(`🚀 API Server running on http://localhost:${port}`);
-  console.log(`📚 API Documentation available at http://localhost:${port}/api/docs`);
+  if (swaggerEnabled) {
+    console.log(`📚 API Documentation available at http://localhost:${port}/api/docs`);
+  }
 }
 
 bootstrap();

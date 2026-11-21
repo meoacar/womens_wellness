@@ -7,12 +7,16 @@ import { SubscriptionStatus, SubscriptionTier, UserStatus } from '@prisma/client
 import { UsersService } from './users.service';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { AdminGuard } from '../common/guards/admin.guard';
+import {
+  generateSafeUploadFilename,
+  MAX_UPLOAD_IMAGE_BYTES,
+  readStreamWithLimit,
+  resolveUploadsDir,
+  sanitizeAndReencodeProfileImage,
+} from '../common/utils/uploads';
+import { extractClientTelemetry } from '../common/utils/client-telemetry';
 import * as fs from 'fs';
 import * as path from 'path';
-import { promisify } from 'util';
-import { pipeline } from 'stream';
-
-const pump = promisify(pipeline);
 
 class UpdateProfileDto {
   @IsOptional()
@@ -215,8 +219,41 @@ export class UsersController {
   @UseGuards(AuthGuard('jwt'))
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Update current user profile' })
-  async updateMe(@CurrentUser() user: any, @Body() dto: UpdateProfileDto) {
-    return this.usersService.updateProfile(user.id, dto);
+  async updateMe(@CurrentUser() user: any, @Body() dto: UpdateProfileDto, @Req() req: any) {
+    const updated = await this.usersService.updateProfile(user.id, dto);
+    if (dto.preferencesJson?.kvkkConsents) {
+      await this.usersService
+        .recordKvkkConsentHistory(
+          user.id,
+          dto.preferencesJson.kvkkConsents,
+          extractClientTelemetry(req),
+        )
+        .catch(() => {});
+    }
+    return updated;
+  }
+
+  @Post('me/client-error')
+  @UseGuards(AuthGuard('jwt'))
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Report mobile runtime error for diagnostics' })
+  async reportClientError(
+    @CurrentUser() user: any,
+    @Body()
+    body: {
+      message: string;
+      stack?: string;
+      path?: string;
+      level?: string;
+      metadataJson?: any;
+    },
+    @Req() req: any,
+  ) {
+    return this.usersService.recordClientError(
+      user.id,
+      body,
+      extractClientTelemetry(req),
+    );
   }
 
   @Delete('me')
@@ -328,6 +365,7 @@ export class UsersController {
   @ApiOperation({ summary: 'Upload profile picture' })
   @ApiConsumes('multipart/form-data')
   async uploadProfilePicture(@CurrentUser() user: any, @Req() req: any) {
+    let writtenFilePath: string | null = null;
     try {
       const data = await req.file();
 
@@ -335,47 +373,62 @@ export class UsersController {
         throw new BadRequestException('File is required');
       }
 
-      // Validate file type
-      const allowedMimeTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
-      if (!allowedMimeTypes.includes(data.mimetype)) {
-        throw new BadRequestException('Only image files are allowed (jpg, jpeg, png, gif, webp)');
-      }
-
-      // Generate unique filename
-      const fileExtension = path.extname(data.filename);
-      const randomName = Array(32)
-        .fill(null)
-        .map(() => Math.round(Math.random() * 16).toString(16))
-        .join('');
-      const filename = `${randomName}${fileExtension}`;
-
-      // Ensure upload directory exists
-      const uploadDir = path.join(process.cwd(), 'uploads', 'profiles');
-      if (!fs.existsSync(uploadDir)) {
-        fs.mkdirSync(uploadDir, { recursive: true });
-      }
-
-      // Save file
-      const filePath = path.join(uploadDir, filename);
-      await pump(data.file, fs.createWriteStream(filePath));
-
-      // Generate public URL (in production, this would be an S3 URL)
-      const baseUrl = process.env.API_BASE_URL || 'http://localhost:4000';
-      const profilePictureUrl = `${baseUrl}/uploads/profiles/${filename}`;
-
-      console.log('Updating profile with URL:', profilePictureUrl, 'for user:', user.id);
-
-      // Update user profile with new picture URL
+      // Read stream within byte limit, then decode & re-encode actual image pixels
+      // (never trust client MIME type or original filename/extension)
+      let rawBuffer: Buffer;
       try {
-        const updatedUser = await this.usersService.updateProfile(user.id, { profilePictureUrl });
-        console.log('Profile updated successfully, new URL:', updatedUser?.profile?.profilePictureUrl);
+        rawBuffer = await readStreamWithLimit(data.file, MAX_UPLOAD_IMAGE_BYTES);
+      } catch (readError: any) {
+        throw new BadRequestException(
+          readError?.message || 'Image file exceeds maximum allowed size',
+        );
+      }
+
+      let processedImage;
+      try {
+        processedImage = await sanitizeAndReencodeProfileImage(rawBuffer);
+      } catch {
+        throw new BadRequestException(
+          'Invalid or unsupported image content (allowed: valid jpg, png, gif, webp)',
+        );
+      }
+
+      const filename = generateSafeUploadFilename(processedImage.extension);
+      const uploadDir = path.join(resolveUploadsDir(), 'profiles');
+      await fs.promises.mkdir(uploadDir, { recursive: true });
+
+      const filePath = path.join(uploadDir, filename);
+      await fs.promises.writeFile(filePath, processedImage.buffer, { mode: 0o644 });
+      writtenFilePath = filePath;
+
+      const relativePath = path.posix.join('profiles', filename);
+      const defaultApiBase =
+        process.env.NODE_ENV === 'production'
+          ? 'https://api.kadinatlasi.com'
+          : 'http://localhost:4000';
+      const baseUrl = (process.env.API_BASE_URL || defaultApiBase).replace(/\/+$/, '');
+      const profilePictureUrl = `${baseUrl}/uploads/${relativePath}`;
+
+      // Persist server-side file ownership record and update profile URL atomically
+      try {
+        await this.usersService.saveUploadedProfilePicture(user.id, {
+          relativePath,
+          mimeType: processedImage.mimeType,
+          sizeBytes: processedImage.buffer.length,
+          profilePictureUrl,
+        });
       } catch (updateError) {
+        await fs.promises.unlink(filePath).catch(() => undefined);
+        writtenFilePath = null;
         console.error('Failed to update profile:', updateError);
         throw new BadRequestException('Failed to update profile with picture URL');
       }
 
       return { profilePictureUrl };
     } catch (error) {
+      if (writtenFilePath) {
+        await fs.promises.unlink(writtenFilePath).catch(() => undefined);
+      }
       console.error('Upload error:', error);
       if (error instanceof BadRequestException) {
         throw error;

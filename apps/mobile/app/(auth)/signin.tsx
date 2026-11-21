@@ -16,11 +16,15 @@ import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import * as SecureStore from 'expo-secure-store';
+import * as WebBrowser from 'expo-web-browser';
+import * as Google from 'expo-auth-session/providers/google';
 import { useAuthStore } from '@/store/authStore';
 import { useOnboardingStore } from '@/store/onboardingStore';
 import { authService } from '@/services/api';
 import { useTheme } from '@/hooks/useTheme';
 import { AccountStatusModal } from '@/components/AccountStatusModal';
+
+WebBrowser.maybeCompleteAuthSession();
 
 type AuthMode = 'signin' | 'register';
 
@@ -36,8 +40,27 @@ export default function SignInScreen() {
   const [rememberedIdentifier, setRememberedIdentifier] = useState<string | null>(null);
   const [focusedField, setFocusedField] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [inlineError, setInlineError] = useState<string | null>(null);
+
+  const androidClientId = process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID_ANDROID;
+  const webClientId = process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID_WEB;
+  const iosClientId = process.env.EXPO_PUBLIC_GOOGLE_CLIENT_ID_IOS || webClientId;
+  const isGoogleEnabled =
+    process.env.EXPO_PUBLIC_FEATURE_GOOGLE_AUTH !== 'false' &&
+    Boolean(Platform.OS === 'android' ? androidClientId : webClientId || iosClientId);
+
+  const [googleRequest, googleResponse, promptGoogleAsync] = Google.useAuthRequest({
+    androidClientId: androidClientId || 'unconfigured',
+    iosClientId: iosClientId || 'unconfigured',
+    webClientId: webClientId || 'unconfigured',
+    ...(Platform.OS === 'android' && androidClientId
+      ? {
+          redirectUri: `com.googleusercontent.apps.${androidClientId.replace('.apps.googleusercontent.com', '')}:/oauthredirect`,
+        }
+      : {}),
+  });
 
   const [statusModal, setStatusModal] = useState<{
     visible: boolean;
@@ -55,6 +78,76 @@ export default function SignInScreen() {
       })
       .catch(() => {});
   }, [loadDraft]);
+
+  useEffect(() => {
+    if (!googleResponse) return;
+    if (googleResponse.type === 'cancel' || googleResponse.type === 'dismiss') {
+      setGoogleLoading(false);
+      return;
+    }
+    if (googleResponse.type === 'error') {
+      setGoogleLoading(false);
+      setInlineError('Google ile giriş başarısız oldu. Lütfen tekrar dene.');
+      return;
+    }
+    if (googleResponse.type === 'success') {
+      const idToken =
+        googleResponse.authentication?.idToken ||
+        (googleResponse.params as any)?.id_token;
+      if (!idToken) {
+        setGoogleLoading(false);
+        setInlineError('Google kimlik doğrulama jetonu alınamadı.');
+        return;
+      }
+      setInlineError(null);
+      setGoogleLoading(true);
+      authService
+        .googleLogin(idToken)
+        .then(async (response) => {
+          if (response.user?.email) {
+            await SecureStore.setItemAsync('lastLoginIdentifier', response.user.email).catch(() => {});
+          }
+          await SecureStore.setItemAsync('hasSeenWelcome', 'true').catch(() => {});
+          await setAuth(response.user, {
+            accessToken: response.accessToken,
+            refreshToken: response.refreshToken,
+          });
+          router.replace('/(tabs)/home');
+        })
+        .catch((error: any) => {
+          if (
+            error?.code === 'ACCOUNT_SUSPENDED' ||
+            error?.code === 'ACCOUNT_DELETED' ||
+            error?.status === 403
+          ) {
+            setStatusModal({
+              visible: true,
+              initialView: 'suspended',
+              reasonMessage: error.message || null,
+            });
+          } else {
+            setInlineError(
+              error?.message || 'Google ile giriş yapılamadı. Lütfen tekrar dene.',
+            );
+          }
+        })
+        .finally(() => {
+          setGoogleLoading(false);
+        });
+    }
+  }, [googleResponse, router, setAuth]);
+
+  const handleGooglePress = async () => {
+    if (!isGoogleEnabled || !googleRequest || loading || googleLoading) return;
+    setInlineError(null);
+    setGoogleLoading(true);
+    try {
+      await promptGoogleAsync();
+    } catch {
+      setGoogleLoading(false);
+      setInlineError('Google oturum penceresi açılamadı.');
+    }
+  };
 
   const hasDraft = Boolean(draftData?.firstName || draftData?.email);
 
@@ -452,6 +545,32 @@ export default function SignInScreen() {
                   </LinearGradient>
                 </TouchableOpacity>
 
+                {isGoogleEnabled && (
+                  <>
+                    <View style={styles.dividerRow}>
+                      <View style={styles.dividerLine} />
+                      <Text style={styles.dividerText}>veya</Text>
+                      <View style={styles.dividerLine} />
+                    </View>
+
+                    <TouchableOpacity
+                      activeOpacity={0.85}
+                      disabled={!googleRequest || loading || googleLoading}
+                      onPress={handleGooglePress}
+                      style={styles.googleBtn}
+                    >
+                      {googleLoading ? (
+                        <ActivityIndicator size="small" color={theme.colors.text} />
+                      ) : (
+                        <>
+                          <Ionicons name="logo-google" size={18} color="#DB4437" />
+                          <Text style={styles.googleBtnText}>Google ile Devam Et</Text>
+                        </>
+                      )}
+                    </TouchableOpacity>
+                  </>
+                )}
+
                 {__DEV__ && (
                   <View style={styles.devQuickRow}>
                     <Text style={styles.devQuickLabel}>Hızlı Test:</Text>
@@ -843,6 +962,38 @@ const createStyles = (theme: ReturnType<typeof useTheme>) =>
     },
     ctaTextDisabled: {
       color: theme.colors.textLight,
+    },
+    dividerRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      marginVertical: 4,
+    },
+    dividerLine: {
+      flex: 1,
+      height: 1,
+      backgroundColor: theme.colors.border,
+    },
+    dividerText: {
+      fontSize: 12,
+      fontWeight: '600',
+      color: theme.colors.textLight,
+    },
+    googleBtn: {
+      height: 50,
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      backgroundColor: theme.colors.backgroundCard,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 10,
+    },
+    googleBtnText: {
+      fontSize: 15,
+      fontWeight: '700',
+      color: theme.colors.text,
     },
     devQuickRow: {
       flexDirection: 'row',

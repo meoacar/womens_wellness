@@ -70,6 +70,7 @@ interface DispatchRun {
   trigger: 'cron' | 'manual';
   totalActivePeriodUsers: number;
   sent: number;
+  queued?: number;
   skippedNoToken: number;
   skippedQuietOrHour: number;
   skippedDailyLimit: number;
@@ -121,6 +122,34 @@ export default function PeriodMessagesPage() {
   const [testMessageId, setTestMessageId] = useState<string | undefined>();
   const [testTarget, setTestTarget] = useState('');
   const [testing, setTesting] = useState(false);
+  const [testUsers, setTestUsers] = useState<Array<{ id: string; email: string; displayName?: string; hasToken: boolean }>>([]);
+  const [loadingUsers, setLoadingUsers] = useState(false);
+
+  const loadTestUsers = async (query = '') => {
+    setLoadingUsers(true);
+    try {
+      const res = await apiClient.get(`/admin/users/search?limit=50${query ? `&search=${encodeURIComponent(query)}` : ''}`);
+      const list = Array.isArray(res.data?.data) ? res.data.data : [];
+      setTestUsers(
+        list.map((u: any) => ({
+          id: u.id,
+          email: u.email,
+          displayName: u.profile?.displayName || u.username || u.email,
+          hasToken: Boolean(u.profile?.preferencesJson?.pushToken),
+        })),
+      );
+    } catch {
+      // Optional user list fallback
+    } finally {
+      setLoadingUsers(false);
+    }
+  };
+
+  useEffect(() => {
+    if (testModalOpen && testUsers.length === 0) {
+      void loadTestUsers();
+    }
+  }, [testModalOpen]);
 
   const fetchData = async () => {
     setLoading(true);
@@ -268,9 +297,15 @@ export default function PeriodMessagesPage() {
       const res = await apiClient.post('/period-notifications/admin/dispatch-now');
       const s = res.data.summary;
       setStats(res.data.stats);
-      message.success(
-        `Gönderim tamamlandı: ${s.sent} push gönderildi, ${s.skippedNoToken} kullanıcının push tokenı yok (mobil içi kart/yerel bildirimle görecek).`,
-      );
+      if (!s || s.totalActivePeriodUsers === 0) {
+        message.info(
+          'Şu an aktif regl dönemindeki kullanıcı bulunamadı. Belirli bir kullanıcıya denemek için "Test Gönder" butonunu kullanabilirsiniz.',
+        );
+      } else {
+        message.success(
+          `Gönderim tamamlandı (${s.totalActivePeriodUsers} kullanıcı): ${s.sent || 0} Expo Push gönderildi, ${s.queued || 0} cihaz bildirim kuyruğuna eklendi.`,
+        );
+      }
     } catch (error: any) {
       message.error(error?.response?.data?.message || 'Toplu gönderim başarısız');
     } finally {
@@ -280,7 +315,7 @@ export default function PeriodMessagesPage() {
 
   const handleSendTest = async () => {
     if (!testTarget.trim()) {
-      message.warning('Lütfen hedef kullanıcı e-postası veya ID girin');
+      message.warning('Lütfen hedef kullanıcı seçin veya e-posta/ID girin');
       return;
     }
     setTesting(true);
@@ -289,10 +324,12 @@ export default function PeriodMessagesPage() {
         userIdOrEmail: testTarget.trim(),
         messageId: testMessageId,
       });
-      if (res.data.status === 'no_push_token') {
+      if (res.data.status === 'ok' || res.data.status === 'queued') {
+        message.success(
+          res.data.message || `Test bildirimi ${res.data.user?.email} kullanıcısına iletildi.`,
+        );
+      } else if (res.data.status === 'no_push_token') {
         message.info(res.data.message);
-      } else if (res.data.status === 'ok') {
-        message.success(`Test bildirimi ${res.data.user?.email} kullanıcısına gönderildi`);
       } else {
         message.warning(`Bildirim durumu: ${res.data.receipt?.message || res.data.status}`);
       }
@@ -435,10 +472,14 @@ export default function PeriodMessagesPage() {
       key: 'totalActivePeriodUsers',
     },
     {
-      title: 'Gönderilen Push',
-      dataIndex: 'sent',
+      title: 'Gönderilen (Push / Kuyruk)',
       key: 'sent',
-      render: (v: number) => <Tag color="green">{v}</Tag>,
+      render: (_: any, r: DispatchRun) => (
+        <Space size={4}>
+          <Tag color="green">Push: {r.sent || 0}</Tag>
+          <Tag color="blue">Kuyruk: {r.queued || 0}</Tag>
+        </Space>
+      ),
     },
     {
       title: 'Token Yok / Saat Dışı / Limit',
@@ -774,6 +815,21 @@ export default function PeriodMessagesPage() {
             Belirli bir kullanıcıya seçili (veya rastgele) regl destek mesajını test push
             olarak gönderin.
           </Text>
+          <Select
+            showSearch
+            allowClear
+            style={{ width: '100%' }}
+            placeholder="Listeden kullanıcı seçin (veya aşağıya e-posta/ID yazın)"
+            loading={loadingUsers}
+            filterOption={false}
+            onSearch={(val) => void loadTestUsers(val)}
+            value={testUsers.some((u) => u.email === testTarget || u.id === testTarget) ? testTarget : undefined}
+            onChange={(val) => setTestTarget(val || '')}
+            options={testUsers.map((u) => ({
+              value: u.email,
+              label: `${u.displayName} (${u.email}) ${u.hasToken ? '• Expo Push' : '• Cihaz Kuyruğu'}`,
+            }))}
+          />
           <Input
             placeholder="Kullanıcı e-postası veya User ID"
             value={testTarget}

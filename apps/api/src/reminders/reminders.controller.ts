@@ -68,6 +68,57 @@ export class RemindersController {
     return this.remindersService.getReminders(req.user.id);
   }
 
+  @Get('preferences')
+  async getNotificationPreferences(@Request() req: any) {
+    return this.pushService.getNotificationPreferences(req.user.id);
+  }
+
+  @Patch('preferences')
+  async updateNotificationPreferences(
+    @Request() req: any,
+    @Body() data: any,
+  ) {
+    return this.pushService.updateNotificationPreferences(req.user.id, data);
+  }
+
+  @Get('push/pending')
+  async getPendingPushNotifications(@Request() req: any) {
+    return {
+      notifications: await this.pushService.getPendingNotifications(req.user.id),
+    };
+  }
+
+  @Post('push/ack')
+  async ackPendingPushNotifications(
+    @Request() req: any,
+    @Body() data: { ids: string[] },
+  ) {
+    return this.pushService.ackPendingNotifications(req.user.id, data?.ids || []);
+  }
+
+  @Post('push/register')
+  async registerPushToken(
+    @Request() req: any,
+    @Body() data: { pushToken: string },
+  ) {
+    return this.pushService.registerPushToken(req.user.id, data.pushToken);
+  }
+
+  @Post('push/test')
+  async testPush(@Request() req: any) {
+    return this.pushService.sendPush(
+      req.user.id,
+      {
+        to: '',
+        sound: 'default',
+        title: 'Kadın Atlası Bildirim Testi 🔔',
+        body: 'Harika! Sunucu ve cihaz bildirimlerin aktif olarak çalışıyor.',
+        data: { screen: 'reminders', test: true },
+      },
+      { ignoreQuietHours: true },
+    );
+  }
+
   @Get(':id')
   async getReminder(@Request() req: any, @Param('id') id: string) {
     return this.remindersService.getReminder(req.user.id, id);
@@ -94,23 +145,5 @@ export class RemindersController {
     @Body() data: { active: boolean },
   ) {
     return this.remindersService.toggleReminder(req.user.id, id, data.active);
-  }
-
-  @Post('push/register')
-  async registerPushToken(
-    @Request() req: any,
-    @Body() data: { pushToken: string },
-  ) {
-    return this.pushService.registerPushToken(req.user.id, data.pushToken);
-  }
-
-  @Post('push/test')
-  async testPush(@Request() req: any) {
-    return this.pushService.sendPush(req.user.id, {
-      to: '',
-      title: 'Test Bildirimi',
-      body: 'Bu bir test bildirimidir.',
-      data: { test: true },
-    });
   }
 }

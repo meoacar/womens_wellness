@@ -5,6 +5,7 @@ import { useRouter } from 'expo-router';
 import { useMutation } from '@tanstack/react-query';
 import { metricsService } from '@/services/api';
 import { useTheme } from '@/hooks/useTheme';
+import { validateAgeYears, validateHeightCm, validateWeightKg } from '@/utils/numberInput';
 
 export default function CalorieCalculatorScreen() {
     const theme = useTheme();
@@ -33,27 +34,26 @@ export default function CalorieCalculatorScreen() {
     });
 
     const handleCalculate = () => {
-        const h = parseFloat(height);
-        const w = parseFloat(weight);
-        const a = parseInt(age);
-
-        if (isNaN(h) || h <= 0) {
-            Alert.alert('Hata', 'Lütfen geçerli bir boy değeri girin');
+        const heightCheck = validateHeightCm(height);
+        if (heightCheck.error || !heightCheck.value) {
+            Alert.alert('Hata', heightCheck.error || 'Lütfen geçerli bir boy değeri girin');
             return;
         }
-        if (isNaN(w) || w <= 0) {
-            Alert.alert('Hata', 'Lütfen geçerli bir kilo değeri girin');
+        const weightCheck = validateWeightKg(weight);
+        if (weightCheck.error || !weightCheck.value) {
+            Alert.alert('Hata', weightCheck.error || 'Lütfen geçerli bir kilo değeri girin');
             return;
         }
-        if (isNaN(a) || a <= 0) {
-            Alert.alert('Hata', 'Lütfen geçerli bir yaş değeri girin');
+        const ageCheck = validateAgeYears(age);
+        if (ageCheck.error || !ageCheck.value) {
+            Alert.alert('Hata', ageCheck.error || 'Lütfen geçerli bir yaş değeri girin');
             return;
         }
 
         calculateBMRMutation.mutate({
-            heightCm: h,
-            weightKg: w,
-            ageYears: a,
+            heightCm: heightCheck.value,
+            weightKg: weightCheck.value,
+            ageYears: ageCheck.value,
             sex,
             activityLevel,
         });
@@ -64,7 +64,7 @@ export default function CalorieCalculatorScreen() {
         { value: 'light', label: 'Hafif Aktif', desc: 'Haftada 1-3 gün' },
         { value: 'moderate', label: 'Orta Aktif', desc: 'Haftada 3-5 gün' },
         { value: 'active', label: 'Çok Aktif', desc: 'Haftada 6-7 gün' },
-        { value: 'extreme', label: 'Aşırı Aktif', desc: 'Günde 2 kez' },
+        { value: 'very_active', label: 'Aşırı Aktif', desc: 'Günde 2 kez' },
     ];
 
     const styles = createStyles(theme);

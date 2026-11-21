@@ -62,13 +62,17 @@ export default function KVKKConsentScreen() {
 
     const handleSave = async () => {
         try {
+            const nowIso = new Date().toISOString();
             const kvkkConsents = {
                 dataProcessing: true,
+                privacyPolicyAccepted: true,
                 marketingConsent,
                 analyticsConsent,
                 aiMemoryConsent,
                 thirdPartyConsent,
-                updatedAt: new Date().toISOString(),
+                version: '1.0',
+                source: 'SETTINGS',
+                updatedAt: nowIso,
             };
             await SecureStore.setItemAsync('kvkkConsents', JSON.stringify(kvkkConsents));
             await api.patch('/me', {
@@ -206,6 +210,13 @@ export default function KVKKConsentScreen() {
                     </View>
 
                     <TouchableOpacity
+                        style={[styles.linkButton, { marginBottom: 10 }]}
+                        onPress={() => router.push('/kvkk-aydinlatma-metni' as any)}
+                    >
+                        <Text style={styles.linkButtonText}>KVKK Aydınlatma Metnini Oku →</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
                         style={styles.linkButton}
                         onPress={() => router.push('/settings/privacy-policy')}
                     >
@@ -236,9 +247,9 @@ export default function KVKKConsentScreen() {
                 <View style={styles.contactBox}>
                     <Text style={styles.contactTitle}>KVKK Başvuruları</Text>
                     <Text style={styles.contactText}>
-                        KVKK haklarınızı kullanmak için:
+                        KVKK Madde 11 kapsamındaki haklarınızı kullanmak için:
                     </Text>
-                    <Text style={styles.contactEmail}>privacy@womenswellness.app</Text>
+                    <Text style={styles.contactEmail}>kvkk@kadinatlasi.com</Text>
                 </View>
             </ScrollView>
         </SafeAreaView>

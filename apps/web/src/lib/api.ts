@@ -1,5 +1,15 @@
 export const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:4000';
+  process.env.NEXT_PUBLIC_API_BASE_URL ||
+  (process.env.NODE_ENV === 'production'
+    ? 'https://api.kadinatlasi.com'
+    : 'http://localhost:4000');
+
+function getRequestBaseUrl(): string {
+  if (typeof window === 'undefined') {
+    return process.env.INTERNAL_API_BASE_URL || API_BASE_URL;
+  }
+  return API_BASE_URL;
+}
 
 export type Locale = 'tr' | 'en';
 
@@ -31,6 +41,7 @@ export interface PublicArticle {
   thumbnailUrl?: string;
   readTimeMin: number;
   publishedAt: string;
+  updatedAt?: string;
   content?: string;
   contentTr?: string;
   contentEn?: string;
@@ -51,8 +62,11 @@ export interface PaywallPlan {
   title: string;
   subtitle?: string;
   badge?: string;
+  badgeText?: string;
+  savingsText?: string;
   price: number;
   currency: string;
+  currencySymbol?: string;
   trialDays: number;
   iosProductId: string;
   androidProductId: string;
@@ -65,12 +79,23 @@ export interface PaywallConfig {
   heroTitle: string;
   heroSubtitle: string;
   trialEnabled: boolean;
-  features: Array<{
+  premiumAiMessageLimit?: number;
+  freeAiMessageLimit?: number;
+  features?: Array<{
     icon: string;
     title: string;
     description: string;
     freeLabel?: string;
     premiumLabel?: string;
+  }>;
+  comparisonRows?: Array<{
+    id: string;
+    icon?: string;
+    color?: string;
+    title: string;
+    freeValue: string | boolean;
+    premiumValue: string | boolean;
+    isActive?: boolean;
   }>;
   plans: {
     MONTHLY: PaywallPlan;
@@ -94,7 +119,7 @@ export interface CmsPage {
 }
 
 async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE_URL}${path}`, {
+  const res = await fetch(`${getRequestBaseUrl()}${path}`, {
     ...init,
     headers: {
       ...(init?.body ? { 'Content-Type': 'application/json' } : {}),

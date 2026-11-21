@@ -20,6 +20,7 @@ import { authProvider } from '@/providers/authProvider';
 import { AdminThemeProvider, useAdminTheme } from '@/providers/themeContext';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
+import { initSentry } from '@/lib/sentry';
 import { usePathname, useRouter } from 'next/navigation';
 import {
   UserOutlined,
@@ -538,6 +539,14 @@ function ThemedAdminShell({ children }: { children: React.ReactNode }) {
                 },
               },
               {
+                name: 'health/postpartum',
+                list: '/health/postpartum',
+                meta: {
+                  label: 'Anne & Bebek (Lohusalık)',
+                  parent: 'health',
+                },
+              },
+              {
                 name: 'health/wellness',
                 list: '/health/wellness',
                 meta: {
@@ -586,9 +595,9 @@ function ThemedAdminShell({ children }: { children: React.ReactNode }) {
               },
               {
                 name: 'ai-providers',
-                list: '/settings/ai-providers',
-                create: '/settings/ai-providers/create',
-                edit: '/settings/ai-providers/edit/:id',
+                list: '/ai/providers',
+                create: '/ai/providers/create',
+                edit: '/ai/providers/edit/:id',
                 meta: {
                   label: 'AI Sağlayıcıları',
                   parent: 'ai',
@@ -660,6 +669,10 @@ function ThemedAdminShell({ children }: { children: React.ReactNode }) {
 }
 
 export default function Providers({ children }: { children: React.ReactNode }) {
+  useEffect(() => {
+    initSentry();
+  }, []);
+
   return (
     <AdminThemeProvider>
       <ThemedAdminShell>{children}</ThemedAdminShell>

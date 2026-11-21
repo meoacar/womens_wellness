@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react';
 import { AppState } from 'react-native';
-import * as Notifications from 'expo-notifications';
+import {
+    getOsNotificationPermissionStatus,
+    syncFunLocalNotifications,
+} from '@/services/notificationEngine';
 import { FunNotification } from '@/types/funNotifications';
 import { FunNotificationService } from '@/services/funNotificationService';
 import { syncPeriodNotifications } from '@/services/periodNotificationSync';
@@ -39,8 +42,11 @@ export function useFunNotifications(options: UseFunNotificationsOptions = {}) {
 
     const checkPermission = async () => {
         try {
-            const { status } = await Notifications.getPermissionsAsync();
-            setHasPermission(status === 'granted');
+            const perm = await getOsNotificationPermissionStatus();
+            setHasPermission(perm.granted);
+            if (perm.granted && preferences.enabled) {
+                syncFunLocalNotifications().catch(() => {});
+            }
         } catch (error) {
             console.error('İzin kontrolü hatası:', error);
             setHasPermission(false);
@@ -72,11 +78,15 @@ export function useFunNotifications(options: UseFunNotificationsOptions = {}) {
             console.log('[useFunNotifications] hasPermission:', hasPermission);
         }
 
-        if (!options.autoShow || !preferences.enabled || !hasPermission) {
+        if (!options.autoShow || !preferences.enabled) {
             if (__DEV__) {
                 console.log('[useFunNotifications] Skipping - conditions not met');
             }
             return;
+        }
+
+        if (hasPermission) {
+            syncFunLocalNotifications().catch(() => {});
         }
 
         // Günlük limit kontrolü (sadece ilk gösterimde)

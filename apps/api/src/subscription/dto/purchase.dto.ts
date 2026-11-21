@@ -1,4 +1,4 @@
-import { IsString, IsEnum, IsNotEmpty } from 'class-validator';
+import { IsString, IsEnum, IsNotEmpty, IsOptional } from 'class-validator';
 import { PaymentProvider } from '@prisma/client';
 
 export class PurchaseDto {
@@ -17,4 +17,9 @@ export class PurchaseDto {
     @IsString()
     @IsNotEmpty()
     transactionId: string;
+
+    @IsOptional()
+    @IsString()
+    @IsNotEmpty()
+    purchaseToken?: string;
 }

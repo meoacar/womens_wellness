@@ -25,7 +25,12 @@ import { userService } from '@/services/api';
 import { useTheme } from '@/hooks/useTheme';
 import { PremiumBadge } from '@/components/premium/PremiumBadge';
 import { usePremium } from '@/hooks/usePremium';
-import { getZodiacSign, ZODIAC_SIGNS } from '@/utils/astrology';
+import {
+  getZodiacSign,
+  parseBirthDateSafe,
+  toBirthDateIsoNoon,
+  ZODIAC_SIGNS,
+} from '@/utils/astrology';
 import {
   MASCOT_AVATARS,
   getMascotAvatarUrl,
@@ -70,7 +75,7 @@ export default function ProfileScreen() {
       setUsername(data?.username || '');
       setEmail(data?.email || '');
       if (data?.profile?.dateOfBirth) {
-        setBirthDate(new Date(data.profile.dateOfBirth));
+        setBirthDate(parseBirthDateSafe(data.profile.dateOfBirth));
       }
       setHeightCm(data?.profile?.heightCm || 165);
       setWeightKg(data?.profile?.weightKg || 60);
@@ -309,7 +314,7 @@ export default function ProfileScreen() {
         firstName,
         lastName,
         email,
-        dateOfBirth: birthDate ? birthDate.toISOString() : null,
+        dateOfBirth: birthDate ? toBirthDateIsoNoon(birthDate) : null,
         heightCm,
         weightKg,
       });
@@ -655,10 +660,10 @@ function DatePickerButton({
 }) {
   const { isDarkMode } = useThemeStore();
   const [showPicker, setShowPicker] = useState(false);
-  const [tempDate, setTempDate] = useState(value || new Date(2000, 0, 1));
+  const [tempDate, setTempDate] = useState(value || new Date(2000, 0, 1, 12, 0, 0));
 
   useEffect(() => {
-    if (value) setTempDate(value);
+    if (value) setTempDate(new Date(value.getFullYear(), value.getMonth(), value.getDate(), 12, 0, 0));
   }, [value]);
 
   const displayText = value
@@ -670,9 +675,11 @@ function DatePickerButton({
   const handleDateChange = (event: any, selectedDate?: Date) => {
     if (Platform.OS === 'android') {
       setShowPicker(false);
-      if (event.type === 'set' && selectedDate) onChange(selectedDate);
+      if (event.type === 'set' && selectedDate) {
+        onChange(new Date(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate(), 12, 0, 0));
+      }
     } else if (selectedDate) {
-      setTempDate(selectedDate);
+      setTempDate(new Date(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate(), 12, 0, 0));
     }
   };
 

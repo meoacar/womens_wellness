@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+  android:id="@+id/notif_expanded_root"
+  android:layout_width="match_parent"
+  android:layout_height="wrap_content"
+  android:orientation="vertical"
+  android:paddingVertical="4dp">
+
+  <!-- Top Metrics Row -->
+  <LinearLayout
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:gravity="center_vertical"
+    android:orientation="horizontal">
+
+    <LinearLayout
+      android:layout_width="0dp"
+      android:layout_height="wrap_content"
+      android:layout_weight="1"
+      android:orientation="horizontal"
+      android:gravity="center_vertical">
+
+      <TextView
+        android:id="@+id/notif_exp_steps"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:maxLines="1"
+        android:text="👟 0 adım"
+        android:textColor="@color/notif_text_primary"
+        android:textSize="15sp"
+        android:textStyle="bold" />
+
+      <TextView
+        android:id="@+id/notif_exp_calories"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="10dp"
+        android:maxLines="1"
+        android:text="🔥 0,0 kcal"
+        android:textColor="@color/notif_text_primary"
+        android:textSize="14sp"
+        android:textStyle="bold" />
+
+      <TextView
+        android:id="@+id/notif_exp_distance"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="8dp"
+        android:maxLines="1"
+        android:text="0,0 km"
+        android:textColor="@color/notif_text_secondary"
+        android:textSize="12sp" />
+    </LinearLayout>
+
+    <TextView
+      android:id="@+id/notif_exp_goal_pct"
+      android:layout_width="wrap_content"
+      android:layout_height="wrap_content"
+      android:maxLines="1"
+      android:text="%0"
+      android:textColor="@color/notif_text_secondary"
+      android:textSize="12sp"
+      android:textStyle="bold" />
+  </LinearLayout>
+
+  <!-- Progress Bar -->
+  <ProgressBar
+    android:id="@+id/notif_exp_progress"
+    style="?android:attr/progressBarStyleHorizontal"
+    android:layout_width="match_parent"
+    android:layout_height="6dp"
+    android:layout_marginTop="7dp"
+    android:max="100"
+    android:progress="0"
+    android:progressDrawable="@drawable/notif_progress_steps" />
+
+  <!-- Period / Cycle Banner Row (clickable to Calendar) -->
+  <LinearLayout
+    android:id="@+id/notif_exp_cycle_row"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginTop="9dp"
+    android:background="@drawable/notif_cycle_pill_bg"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:paddingHorizontal="10dp"
+    android:paddingVertical="6dp">
+
+    <TextView
+      android:id="@+id/notif_exp_cycle_text"
+      android:layout_width="0dp"
+      android:layout_height="wrap_content"
+      android:layout_weight="1"
+      android:ellipsize="end"
+      android:maxLines="1"
+      android:text="🌸 Döngü Takibi • Takvimi aç"
+      android:textColor="@color/notif_cycle_text"
+      android:textSize="12sp"
+      android:textStyle="bold" />
+
+    <TextView
+      android:layout_width="wrap_content"
+      android:layout_height="wrap_content"
+      android:layout_marginStart="6dp"
+      android:text="Takvim →"
+      android:textColor="@color/notif_cycle_text"
+      android:textSize="11sp"
+      android:textStyle="bold" />
+  </LinearLayout>
+</LinearLayout>

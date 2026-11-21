@@ -22,81 +22,97 @@ export class ReminderSchedulerService {
     timezone = 'Europe/Istanbul',
   ): Date {
     const now = new Date();
-    const [hours, minutes] = time.split(':').map(Number);
+    const [rawH, rawM] = (time || '09:00').split(':').map(Number);
+    const targetHours = Number.isFinite(rawH) ? Math.min(23, Math.max(0, rawH)) : 9;
+    const targetMinutes = Number.isFinite(rawM) ? Math.min(59, Math.max(0, rawM)) : 0;
 
-    let nextRun = new Date();
-    nextRun.setHours(hours, minutes, 0, 0);
+    // Resolve current local calendar & time parts in user's timezone so UTC container stays accurate
+    const tzParts = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone || 'Europe/Istanbul',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    }).formatToParts(now);
+
+    const part = (k: string) => Number(tzParts.find((p) => p.type === k)?.value || 0);
+    const localAsUtcMs = Date.UTC(
+      part('year'),
+      Math.max(0, part('month') - 1),
+      part('day'),
+      part('hour') % 24,
+      part('minute'),
+      part('second'),
+    );
+    const tzOffsetMs = localAsUtcMs - now.getTime();
+
+    const localNow = new Date(localAsUtcMs);
+    const localNext = new Date(
+      Date.UTC(
+        localNow.getUTCFullYear(),
+        localNow.getUTCMonth(),
+        localNow.getUTCDate(),
+        targetHours,
+        targetMinutes,
+        0,
+        0,
+      ),
+    );
 
     switch (type) {
       case 'DAILY':
-        // If time has passed today, schedule for tomorrow
-        if (nextRun <= now) {
-          nextRun.setDate(nextRun.getDate() + 1);
+        if (localNext <= localNow) {
+          localNext.setUTCDate(localNext.getUTCDate() + 1);
         }
         break;
 
       case 'WEEKLY':
-        // Find next occurrence of specified day(s)
         if (days && days.length > 0) {
-          const currentDay = now.getDay();
+          const currentDay = localNow.getUTCDay();
           const sortedDays = [...days].sort((a, b) => a - b);
 
-          // Find next day in the list
-          let targetDay = sortedDays.find((d) => d > currentDay);
-
-          // If no day found this week, use first day of next week
-          if (!targetDay) {
-            targetDay = sortedDays[0];
-            nextRun.setDate(nextRun.getDate() + (7 - currentDay + targetDay));
-          } else {
-            nextRun.setDate(nextRun.getDate() + (targetDay - currentDay));
+          if (sortedDays.includes(currentDay) && localNext > localNow) {
+            break;
           }
 
-          // If same day but time passed, move to next week
-          if (targetDay === currentDay && nextRun <= now) {
-            nextRun.setDate(nextRun.getDate() + 7);
+          const nextDay = sortedDays.find((d) => d > currentDay);
+          if (nextDay === undefined) {
+            const firstDay = sortedDays[0];
+            localNext.setUTCDate(localNext.getUTCDate() + (7 - currentDay + firstDay));
+          } else {
+            localNext.setUTCDate(localNext.getUTCDate() + (nextDay - currentDay));
           }
         }
         break;
 
       case 'MONTHLY':
-        // Schedule for specific day(s) of month
         if (days && days.length > 0) {
-          const currentDate = now.getDate();
+          const currentDate = localNow.getUTCDate();
           const sortedDays = [...days].sort((a, b) => a - b);
 
-          // Find next day in this month
-          let targetDay = sortedDays.find((d) => d > currentDate);
-
-          if (!targetDay) {
-            // Move to next month
-            nextRun.setMonth(nextRun.getMonth() + 1);
-            targetDay = sortedDays[0];
+          if (sortedDays.includes(currentDate) && localNext > localNow) {
+            break;
           }
 
-          nextRun.setDate(targetDay);
-
-          // If same day but time passed, move to next occurrence
-          if (targetDay === currentDate && nextRun <= now) {
-            const nextDayIndex = sortedDays.indexOf(targetDay) + 1;
-            if (nextDayIndex < sortedDays.length) {
-              nextRun.setDate(sortedDays[nextDayIndex]);
-            } else {
-              nextRun.setMonth(nextRun.getMonth() + 1);
-              nextRun.setDate(sortedDays[0]);
-            }
+          const nextDay = sortedDays.find((d) => d > currentDate);
+          if (nextDay === undefined) {
+            localNext.setUTCDate(1);
+            localNext.setUTCMonth(localNext.getUTCMonth() + 1);
+            localNext.setUTCDate(sortedDays[0]);
+          } else {
+            localNext.setUTCDate(nextDay);
           }
         }
         break;
 
       case 'CUSTOM':
-        // Use custom cron expression (handled by BullMQ)
-        // For now, just set to next hour
-        nextRun = new Date(now.getTime() + 3600000);
-        break;
+        return new Date(now.getTime() + 3600000);
     }
 
-    return nextRun;
+    return new Date(localNext.getTime() - tzOffsetMs);
   }
 
   /**
@@ -116,13 +132,14 @@ export class ReminderSchedulerService {
       return true;
     }
 
-    const hour = Number(
-      new Intl.DateTimeFormat('tr-TR', {
+    const rawHour = Number(
+      new Intl.DateTimeFormat('en-US', {
         hour: 'numeric',
         hour12: false,
-        timeZone: quietHours.timezone,
+        timeZone: quietHours.timezone || 'Europe/Istanbul',
       }).format(now),
     );
+    const hour = Number.isNaN(rawHour) ? now.getUTCHours() : rawHour % 24;
 
     // Handle overnight window (e.g., 22:00 - 08:00)
     if (quietHours.startHour > quietHours.endHour) {

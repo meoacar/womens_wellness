@@ -5,8 +5,8 @@ import {
   StyleSheet,
   TouchableOpacity,
   Alert,
-  Linking,
-  Platform,
+  AppState,
+  AppStateStatus,
   Switch,
   ActivityIndicator,
 } from 'react-native';
@@ -14,7 +14,12 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import * as Notifications from 'expo-notifications';
+import {
+  getOsNotificationPermissionStatus,
+  openAppNotificationSettings,
+  registerPushTokenWithBackend,
+  requestOsNotificationPermission,
+} from '@/services/notificationEngine';
 import { useTheme } from '@/hooks/useTheme';
 import { useOnboardingStore } from '@/store/onboardingStore';
 import { NotificationSchema, type NotificationInput } from '@/schemas/onboarding';
@@ -96,49 +101,36 @@ export default function NotificationsStep() {
 
   useEffect(() => {
     setCurrentStep(4);
-    Notifications.getPermissionsAsync()
+    getOsNotificationPermissionStatus()
       .then((res) => {
-        if (
-          res.granted ||
-          res.ios?.status === Notifications.IosAuthorizationStatus.PROVISIONAL
-        ) {
-          setPermissionGranted(true);
-        }
+        setPermissionGranted(res.granted);
       })
       .catch(() => {});
+
+    const sub = AppState.addEventListener('change', (state: AppStateStatus) => {
+      if (state === 'active') {
+        getOsNotificationPermissionStatus()
+          .then((res) => setPermissionGranted(res.granted))
+          .catch(() => {});
+      }
+    });
+    return () => sub.remove();
   }, []);
 
   const requestNotificationPermission = async () => {
     if (requestingPermission) return;
     setRequestingPermission(true);
     try {
-      const existing = await Notifications.getPermissionsAsync();
-      let isGranted =
-        existing.granted ||
-        existing.ios?.status === Notifications.IosAuthorizationStatus.PROVISIONAL;
-      let canAskAgain = existing.canAskAgain ?? true;
-
-      if (!isGranted && canAskAgain) {
-        const requested = await Notifications.requestPermissionsAsync({
-          ios: {
-            allowAlert: true,
-            allowBadge: true,
-            allowSound: true,
-          },
-        });
-        isGranted =
-          requested.granted ||
-          requested.ios?.status === Notifications.IosAuthorizationStatus.PROVISIONAL;
-        canAskAgain = requested.canAskAgain ?? false;
-      }
-
-      if (isGranted) {
+      const res = await requestOsNotificationPermission({ showSettingsPrompt: false });
+      if (res.granted) {
         setPermissionGranted(true);
+        registerPushTokenWithBackend().catch(() => {});
         Alert.alert(
           'Bildirim İzni Verildi',
           'Bildirim tercihlerin başarıyla kaydedildi.'
         );
-      } else if (!canAskAgain) {
+      } else if (!res.canAskAgain) {
+        setPermissionGranted(false);
         Alert.alert(
           'Bildirim İzni Gerekli',
           'Bildirim izni daha önce reddedilmiş. Cihaz ayarlarından izin verebilir veya doğrudan devam edebilirsin.',
@@ -146,17 +138,12 @@ export default function NotificationsStep() {
             { text: 'Şimdilik Geç', style: 'cancel' },
             {
               text: 'Ayarları Aç',
-              onPress: () => {
-                if (Platform.OS === 'ios') {
-                  Linking.openURL('app-settings:');
-                } else {
-                  Linking.openSettings();
-                }
-              },
+              onPress: openAppNotificationSettings,
             },
           ]
         );
       } else {
+        setPermissionGranted(false);
         Alert.alert(
           'Bildirimler Kapalı',
           'Bildirimleri daha sonra uygulama ayarlarından açabilirsin.',
@@ -164,11 +151,11 @@ export default function NotificationsStep() {
         );
       }
     } catch (error) {
-      console.warn('Notification permission request fallback:', error);
-      setPermissionGranted(true);
+      console.warn('Notification permission request failed:', error);
+      setPermissionGranted(false);
       Alert.alert(
-        'Bildirim Tercihi Kaydedildi',
-        'Expo Go / geliştirme ortamında bildirim tercihin uygulama içi olarak aktif edildi.'
+        'Bildirim İzni Alınamadı',
+        'Cihaz ayarlarından Kadın Atlası bildirimlerine izin verebilir veya daha sonra ayarlardan açabilirsin.'
       );
     } finally {
       setRequestingPermission(false);

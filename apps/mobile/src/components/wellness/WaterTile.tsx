@@ -110,6 +110,8 @@ export const WaterTile: React.FC<WaterTileProps> = ({ data }) => {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['homeSnapshot'] });
       queryClient.invalidateQueries({ queryKey: ['waterToday'] });
+      queryClient.invalidateQueries({ queryKey: ['dailyTasks'] });
+      queryClient.invalidateQueries({ queryKey: ['gamification'] });
     },
     onError: (error: any) => {
       setOptimisticCurrent(data.current);
@@ -206,10 +208,10 @@ export const WaterTile: React.FC<WaterTileProps> = ({ data }) => {
         <View style={s.actionsRow}>
           <TouchableOpacity
             style={s.quickButton}
-            onPress={() => handleQuickAdd(250)}
+            onPress={() => handleQuickAdd(200)}
             activeOpacity={0.7}
           >
-            <Text style={s.quickButtonText}>+250 ml</Text>
+            <Text style={s.quickButtonText}>+200 ml</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={s.quickButton}
