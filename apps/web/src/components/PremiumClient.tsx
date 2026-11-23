@@ -201,9 +201,22 @@ export function PremiumClient({ paywall }: { paywall: PaywallConfig | null }) {
         </div>
       )}
 
-      <div className="mt-8 flex items-center justify-center gap-2 text-center text-xs text-[var(--text-muted)]">
-        <ShieldCheck className="h-4 w-4 text-emerald-500" />
-        <span>{t.premium.storeNote}</span>
+      <div className="mt-8 rounded-2xl border border-[var(--border-soft)] bg-white/70 p-5 text-xs leading-relaxed text-[var(--text-muted)] dark:bg-[#1a1326]/70">
+        <p className="mb-2 flex items-center gap-2 font-bold text-[var(--text-main)]">
+          <ShieldCheck className="h-4 w-4 text-emerald-500" />
+          Ön Bilgilendirme ve Abonelik Koşulları
+        </p>
+        <p>
+          {t.premium.storeNote} Abonelikler dönem bitiminden en az 24 saat önce App Store veya Google Play hesap ayarlarından iptal edilmediği sürece otomatik yenilenir. Detaylar için{' '}
+          <a href="/sayfa/kullanim-kosullari" className="font-semibold text-[#EC4899] underline">
+            Kullanım Koşulları
+          </a>{' '}
+          ve{' '}
+          <a href="/sayfa/gizlilik-politikasi" className="font-semibold text-[#EC4899] underline">
+            Gizlilik Politikası &amp; KVKK Aydınlatma Metni
+          </a>{' '}
+          sayfalarını inceleyebilirsiniz.
+        </p>
       </div>
     </div>
   );

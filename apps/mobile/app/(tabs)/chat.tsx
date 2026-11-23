@@ -11,6 +11,7 @@ import {
   Alert,
   Animated,
   ScrollView,
+  Modal,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useState, useRef, useEffect } from 'react';
@@ -99,6 +100,36 @@ export default function ChatScreen() {
   const [showQuotaExceeded, setShowQuotaExceeded] = useState(false);
 
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [reportTarget, setReportTarget] = useState<{ id: string; content: string } | null>(null);
+  const [reportReason, setReportReason] = useState<string>('Yanlış veya yanıltıcı tıbbi bilgi');
+  const [reportDescription, setReportDescription] = useState<string>('');
+  const [isReporting, setIsReporting] = useState(false);
+  const [reportedIds, setReportedIds] = useState<Record<string, boolean>>({});
+
+  const handleSubmitAiReport = async () => {
+    if (!reportTarget) return;
+    try {
+      setIsReporting(true);
+      await chatService.reportMessage({
+        messageId: reportTarget.id,
+        conversationId: conversationId || undefined,
+        messageContent: reportTarget.content,
+        reason: reportReason,
+        description: reportDescription.trim() || undefined,
+      });
+      setReportedIds((prev) => ({ ...prev, [reportTarget.id]: true }));
+      setReportTarget(null);
+      setReportDescription('');
+      Alert.alert(
+        'Bildirim Alındı',
+        'NOVA AI yanıtı hakkındaki bildiriminiz ekibimize iletildi ve incelenecektir.',
+      );
+    } catch (error: any) {
+      Alert.alert('Hata', error?.message || 'Bildirim gönderilemedi');
+    } finally {
+      setIsReporting(false);
+    }
+  };
   const orbPulse = useRef(new Animated.Value(1)).current;
   const flatListRef = useRef<FlatList>(null);
 
@@ -429,25 +460,51 @@ export default function ChatScreen() {
               {!item.isStreaming && (
                 <View style={styles.assistantFooter}>
                   <Text style={styles.assistantTag}>NOVA AI</Text>
-                  <TouchableOpacity
-                    style={styles.copyBtn}
-                    onPress={() => handleCopyMessage(item.id, item.content)}
-                    activeOpacity={0.7}
-                  >
-                    <Ionicons
-                      name={copiedId === item.id ? 'checkmark-outline' : 'copy-outline'}
-                      size={13}
-                      color={copiedId === item.id ? '#10B981' : theme.colors.textSecondary}
-                    />
-                    <Text
-                      style={[
-                        styles.copyBtnText,
-                        copiedId === item.id && { color: '#10B981' },
-                      ]}
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                    <TouchableOpacity
+                      style={styles.copyBtn}
+                      onPress={() => handleCopyMessage(item.id, item.content)}
+                      activeOpacity={0.7}
                     >
-                      {copiedId === item.id ? 'Kopyalandı' : 'Kopyala'}
-                    </Text>
-                  </TouchableOpacity>
+                      <Ionicons
+                        name={copiedId === item.id ? 'checkmark-outline' : 'copy-outline'}
+                        size={13}
+                        color={copiedId === item.id ? '#10B981' : theme.colors.textSecondary}
+                      />
+                      <Text
+                        style={[
+                          styles.copyBtnText,
+                          copiedId === item.id && { color: '#10B981' },
+                        ]}
+                      >
+                        {copiedId === item.id ? 'Kopyalandı' : 'Kopyala'}
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.copyBtn}
+                      onPress={() => {
+                        setReportReason('Yanlış veya yanıltıcı tıbbi bilgi');
+                        setReportDescription('');
+                        setReportTarget({ id: item.id, content: item.content });
+                      }}
+                      activeOpacity={0.7}
+                      disabled={Boolean(reportedIds[item.id])}
+                    >
+                      <Ionicons
+                        name={reportedIds[item.id] ? 'checkmark-circle-outline' : 'flag-outline'}
+                        size={13}
+                        color={reportedIds[item.id] ? '#10B981' : '#EF4444'}
+                      />
+                      <Text
+                        style={[
+                          styles.copyBtnText,
+                          { color: reportedIds[item.id] ? '#10B981' : '#EF4444' },
+                        ]}
+                      >
+                        {reportedIds[item.id] ? 'Bildirildi' : 'Bildir'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
               )}
             </>
@@ -805,6 +862,81 @@ export default function ChatScreen() {
         description="Son 14 günlük semptom ve döngü verilerine özel doktor randevusu soru listesi ile faz bakım planını Premium ile oluştur."
       />
 
+      <Modal
+        visible={Boolean(reportTarget)}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setReportTarget(null)}
+      >
+        <View style={styles.reportOverlay}>
+          <View style={styles.reportCard}>
+            <View style={styles.reportHeader}>
+              <Text style={styles.reportTitle}>NOVA AI Yanıtını Bildir</Text>
+              <TouchableOpacity onPress={() => setReportTarget(null)}>
+                <Ionicons name="close" size={22} color={theme.colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.reportSubtitle}>
+              Uygunsuz, hatalı veya zararlı bulduğunuz nedeni seçin:
+            </Text>
+            {[
+              'Yanlış veya yanıltıcı tıbbi bilgi',
+              'Zararlı veya tehlikeli tavsiye',
+              'Uygunsuz veya saldırgan içerik',
+              'Diğer',
+            ].map((reason) => {
+              const selected = reportReason === reason;
+              return (
+                <TouchableOpacity
+                  key={reason}
+                  style={[
+                    styles.reasonOption,
+                    selected && styles.reasonOptionSelected,
+                  ]}
+                  onPress={() => setReportReason(reason)}
+                >
+                  <Ionicons
+                    name={selected ? 'radio-button-on' : 'radio-button-off'}
+                    size={18}
+                    color={selected ? theme.colors.primary : theme.colors.textSecondary}
+                  />
+                  <Text style={styles.reasonText}>{reason}</Text>
+                </TouchableOpacity>
+              );
+            })}
+            <TextInput
+              style={styles.reportInput}
+              placeholder="Ek açıklama (isteğe bağlı)..."
+              placeholderTextColor={theme.colors.textLight}
+              value={reportDescription}
+              onChangeText={setReportDescription}
+              multiline
+              maxLength={500}
+            />
+            <View style={styles.reportActions}>
+              <TouchableOpacity
+                style={styles.reportCancelBtn}
+                onPress={() => setReportTarget(null)}
+                disabled={isReporting}
+              >
+                <Text style={styles.reportCancelText}>Vazgeç</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.reportSubmitBtn}
+                onPress={handleSubmitAiReport}
+                disabled={isReporting}
+              >
+                {isReporting ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.reportSubmitText}>Bildirimi Gönder</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       <QuotaExceededModal
         visible={showQuotaExceeded}
         onClose={() => setShowQuotaExceeded(false)}
@@ -1022,6 +1154,97 @@ const createStyles = (theme: ReturnType<typeof useTheme>) =>
       fontSize: 11,
       fontWeight: '600',
       color: theme.colors.textSecondary,
+    },
+    reportOverlay: {
+      flex: 1,
+      backgroundColor: 'rgba(0,0,0,0.55)',
+      justifyContent: 'center',
+      padding: 20,
+    },
+    reportCard: {
+      backgroundColor: theme.colors.backgroundCard,
+      borderRadius: 18,
+      padding: 18,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+    },
+    reportHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: 8,
+    },
+    reportTitle: {
+      fontSize: 16,
+      fontWeight: '700',
+      color: theme.colors.text,
+    },
+    reportSubtitle: {
+      fontSize: 13,
+      color: theme.colors.textSecondary,
+      marginBottom: 12,
+    },
+    reasonOption: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      paddingVertical: 10,
+      paddingHorizontal: 12,
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      marginBottom: 8,
+    },
+    reasonOptionSelected: {
+      borderColor: theme.colors.primary,
+      backgroundColor: theme.colors.primary + '12',
+    },
+    reasonText: {
+      fontSize: 13.5,
+      color: theme.colors.text,
+      flex: 1,
+    },
+    reportInput: {
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      borderRadius: 10,
+      padding: 10,
+      minHeight: 70,
+      color: theme.colors.text,
+      backgroundColor: theme.colors.backgroundSecondary,
+      textAlignVertical: 'top',
+      marginTop: 4,
+      marginBottom: 14,
+      fontSize: 13,
+    },
+    reportActions: {
+      flexDirection: 'row',
+      justifyContent: 'flex-end',
+      gap: 10,
+    },
+    reportCancelBtn: {
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+      borderRadius: 10,
+      backgroundColor: theme.colors.backgroundSecondary,
+    },
+    reportCancelText: {
+      fontSize: 13,
+      fontWeight: '600',
+      color: theme.colors.textSecondary,
+    },
+    reportSubmitBtn: {
+      paddingHorizontal: 16,
+      paddingVertical: 10,
+      borderRadius: 10,
+      backgroundColor: '#EF4444',
+      minWidth: 120,
+      alignItems: 'center',
+    },
+    reportSubmitText: {
+      fontSize: 13,
+      fontWeight: '700',
+      color: '#FFFFFF',
     },
     typingIndicator: {
       flexDirection: 'row',

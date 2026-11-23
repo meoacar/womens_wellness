@@ -417,7 +417,10 @@ export default function ProfileScreen() {
               </View>
             )}
           </TouchableOpacity>
-          <Text style={styles.avatarName}>{currentDisplayName}</Text>
+          <View style={styles.avatarNameRow}>
+            <Text style={styles.avatarName}>{currentDisplayName}</Text>
+            {isPremium && <PremiumBadge size="small" variant="icon" />}
+          </View>
 
           <View style={styles.photoActionsRow}>
             <TouchableOpacity
@@ -938,6 +941,13 @@ const createStyles = (theme: ReturnType<typeof useTheme>) =>
       fontSize: 18,
       fontWeight: '800',
       color: theme.colors.text,
+    },
+    avatarNameRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 6,
+      marginTop: 12,
     },
     changePhotoText: {
       fontSize: 13.5,

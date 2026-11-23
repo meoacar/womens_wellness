@@ -254,6 +254,22 @@ export default function WelcomeSignUpScreen() {
               Verilerin şifreli saklanır · Reklamsız ve özel deneyim
             </Text>
           </View>
+
+          <View style={styles.legalLinksRow}>
+            <TouchableOpacity
+              onPress={() => router.push('/settings/privacy-policy' as any)}
+              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+            >
+              <Text style={styles.legalLinkText}>KVKK Aydınlatma Metni</Text>
+            </TouchableOpacity>
+            <Text style={styles.legalDot}>·</Text>
+            <TouchableOpacity
+              onPress={() => router.push('/settings/terms-of-service' as any)}
+              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+            >
+              <Text style={styles.legalLinkText}>Kullanım Koşulları</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -504,5 +520,22 @@ const createStyles = (theme: ReturnType<typeof useTheme>) =>
     privacyText: {
       fontSize: 11.5,
       color: theme.colors.textSecondary,
+    },
+    legalLinksRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 6,
+      marginTop: 2,
+    },
+    legalLinkText: {
+      fontSize: 11.5,
+      fontWeight: '600',
+      color: theme.colors.primary,
+      textDecorationLine: 'underline',
+    },
+    legalDot: {
+      fontSize: 11.5,
+      color: theme.colors.textLight,
     },
   });

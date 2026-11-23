@@ -1,4 +1,4 @@
-import { View, Text, StyleSheet, TouchableOpacity, Animated } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Animated, Image, ScrollView } from 'react-native';
 import { useTheme } from '@/hooks/useTheme';
 import { Ionicons } from '@expo/vector-icons';
 import { Answer, VoteType, AnswerComment } from '@/types/qna';
@@ -116,7 +116,15 @@ export function AnswerCard({
                             isAnonymous={false}
                         />
                         <View>
-                            <Text style={styles.authorName}>{answer.user?.displayName || 'Anonim Kullanıcı'}</Text>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                <Text style={styles.authorName}>{answer.user?.displayName || 'Anonim Kullanıcı'}</Text>
+                                {!(answer as any).isAnonymousAuthor && answer.user?.isPremium && (
+                                    <View style={styles.inlinePremiumBadge}>
+                                        <Ionicons name="sparkles" size={10} color="#D97706" />
+                                        <Text style={styles.inlinePremiumText}>PRO</Text>
+                                    </View>
+                                )}
+                            </View>
                             {answer.user?.reputation !== undefined && (
                                 <Text style={styles.reputation}>
                                     {answer.user.reputation} puan
@@ -131,6 +139,23 @@ export function AnswerCard({
 
                 {/* Content */}
                 <Text style={styles.content}>{answer.content}</Text>
+
+                {Array.isArray(answer.imageUrls) && answer.imageUrls.length > 0 && (
+                    <ScrollView
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        contentContainerStyle={styles.answerImagesRow}
+                    >
+                        {answer.imageUrls.map((uri, idx) => (
+                            <Image
+                                key={`${uri}-${idx}`}
+                                source={{ uri }}
+                                style={styles.answerImage}
+                                resizeMode="cover"
+                            />
+                        ))}
+                    </ScrollView>
+                )}
 
                 {/* Actions */}
                 <View style={styles.actions}>
@@ -330,6 +355,33 @@ const createStyles = (theme: ReturnType<typeof useTheme>) =>
             fontSize: 14,
             fontWeight: '600',
             color: theme.colors.text,
+        },
+        inlinePremiumBadge: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 2,
+            backgroundColor: 'rgba(245, 158, 11, 0.16)',
+            paddingHorizontal: 5,
+            paddingVertical: 1.5,
+            borderRadius: 6,
+            borderWidth: 1,
+            borderColor: 'rgba(245, 158, 11, 0.32)',
+        },
+        inlinePremiumText: {
+            fontSize: 9,
+            fontWeight: '800',
+            color: '#D97706',
+        },
+        answerImagesRow: {
+            flexDirection: 'row',
+            gap: 8,
+            marginBottom: theme.spacing.md,
+        },
+        answerImage: {
+            width: 140,
+            height: 140,
+            borderRadius: 12,
+            backgroundColor: theme.colors.backgroundSecondary,
         },
         reputation: {
             fontSize: 11,

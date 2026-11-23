@@ -42,6 +42,53 @@ export class ModerationController {
     }
 
     /**
+     * Kullanıcı engelle (Google Play UGC politikası)
+     * POST /api/qna/moderation/block/:targetUserId
+     */
+    @Post('block/:targetUserId')
+    @Throttle({ default: { limit: 30, ttl: 3600000 } })
+    async blockUser(
+        @Request() req,
+        @Param('targetUserId') targetUserId: string,
+        @Body('reason') reason?: string,
+    ) {
+        const userId = req.user?.id || req.user?.userId || req.user?.sub;
+        if (!userId) {
+            throw new BadRequestException('User ID not found');
+        }
+        return this.moderationService.blockUser(userId, targetUserId, reason);
+    }
+
+    /**
+     * Kullanıcı engelini kaldır
+     * DELETE /api/qna/moderation/block/:targetUserId
+     */
+    @Delete('block/:targetUserId')
+    async unblockUser(
+        @Request() req,
+        @Param('targetUserId') targetUserId: string,
+    ) {
+        const userId = req.user?.id || req.user?.userId || req.user?.sub;
+        if (!userId) {
+            throw new BadRequestException('User ID not found');
+        }
+        return this.moderationService.unblockUser(userId, targetUserId);
+    }
+
+    /**
+     * Engellenen kullanıcıları listele
+     * GET /api/qna/moderation/blocked-users
+     */
+    @Get('blocked-users')
+    async getBlockedUsers(@Request() req) {
+        const userId = req.user?.id || req.user?.userId || req.user?.sub;
+        if (!userId) {
+            throw new BadRequestException('User ID not found');
+        }
+        return this.moderationService.getBlockedUsers(userId);
+    }
+
+    /**
      * Raporları listele (admin)
      * GET /api/qna/moderation/reports
      */

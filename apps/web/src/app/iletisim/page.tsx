@@ -204,6 +204,11 @@ export default function ContactPage() {
                     <option value="KVKK / Veri Talebi">
                       {locale === 'tr' ? 'KVKK / Veri Talebi' : 'KVKK / Data Protection Request'}
                     </option>
+                    <option value="Hesap ve Veri Silme Talebi">
+                      {locale === 'tr'
+                        ? 'Hesabımı ve verilerimi silmek istiyorum'
+                        : 'I want to delete my account and data'}
+                    </option>
                     <option value="İş Birliği">
                       {locale === 'tr' ? 'İş Birliği / Basın' : 'Partnership / Press'}
                     </option>

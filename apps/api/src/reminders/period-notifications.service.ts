@@ -543,6 +543,11 @@ export class PeriodNotificationsService {
       }
 
       const sameDay = user.history?.date === user.localDateStr;
+      const currentHourKey = `${user.localDateStr}-${user.localHour}`;
+      if (!forceNow && sameDay && (user.history as any)?.lastHourKey === currentHourKey) {
+        skippedQuietOrHour++;
+        continue;
+      }
       const sentCountToday = sameDay ? Number(user.history?.count || 0) : 0;
       const sentIdsToday = sameDay && Array.isArray(user.history?.sentIds)
         ? user.history.sentIds
@@ -593,6 +598,7 @@ export class PeriodNotificationsService {
 
         const nextHistory = {
           date: user.localDateStr,
+          lastHourKey: `${user.localDateStr}-${user.localHour}`,
           count: sentCountToday + 1,
           sentIds: [...sentIdsToday, selected.id].slice(-12),
           lastSentAt: now.toISOString(),

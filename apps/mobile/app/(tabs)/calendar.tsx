@@ -627,87 +627,105 @@ export default function CalendarScreen() {
                   </View>
                 )}
               </View>
+            ) : toDateKey(inspectedDay.date) > todayKey ? (
+              <View style={{ gap: 10 }}>
+                <Text style={styles.emptyLogHint}>
+                  Henüz gelmemiş ileri tarihler için regl veya günlük kayıt eklenemez.
+                </Text>
+                <TouchableOpacity
+                  style={styles.subActionLink}
+                  onPress={goToToday}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="today-outline" size={14} color="#FF4D8D" />
+                  <Text style={styles.subActionLinkText}>Bugüne Dön</Text>
+                </TouchableOpacity>
+              </View>
             ) : (
               <Text style={styles.emptyLogHint}>
                 Bu gün için semptom, ruh hali veya akış kaydı eklemek için dokun.
               </Text>
             )}
 
-            {/* One-tap Actions */}
-            <View style={styles.actionRow}>
-              <TouchableOpacity
-                style={styles.primaryActionButton}
-                onPress={() => setShowDayDetails(true)}
-                activeOpacity={0.85}
-              >
-                <Ionicons name="create-outline" size={16} color="#FFFFFF" />
-                <Text style={styles.primaryActionText}>
-                  {inspectedDay.dailyLog ? 'Kaydı Düzenle' : 'Günlük Ekle'}
-                </Text>
-              </TouchableOpacity>
+            {/* One-tap Actions (only for today & past dates) */}
+            {toDateKey(inspectedDay.date) <= todayKey && (
+              <>
+                <View style={styles.actionRow}>
+                  <TouchableOpacity
+                    style={styles.primaryActionButton}
+                    onPress={() => setShowDayDetails(true)}
+                    activeOpacity={0.85}
+                  >
+                    <Ionicons name="create-outline" size={16} color="#FFFFFF" />
+                    <Text style={styles.primaryActionText}>
+                      {inspectedDay.dailyLog ? 'Kaydı Düzenle' : 'Günlük Ekle'}
+                    </Text>
+                  </TouchableOpacity>
 
-              {!inspectedDay.isPeriod ? (
-                <TouchableOpacity
-                  style={styles.secondaryActionButton}
-                  onPress={openCreatePeriodModal}
-                  activeOpacity={0.85}
-                >
-                  <Ionicons name="water-outline" size={16} color="#FF4D8D" />
-                  <Text style={styles.secondaryActionText}>Regl Başlat</Text>
-                </TouchableOpacity>
-              ) : inspectedDay.cycleId && !inspectedDay.isCycleEnd ? (
-                <TouchableOpacity
-                  style={styles.secondaryActionButton}
-                  onPress={() =>
-                    confirmMarkPeriodEnd(inspectedDay.cycleId, inspectedDay.date, false)
-                  }
-                  activeOpacity={0.85}
-                >
-                  <Ionicons name="checkmark-circle-outline" size={16} color="#FF4D8D" />
-                  <Text style={styles.secondaryActionText}>Adet Bitişi</Text>
-                </TouchableOpacity>
-              ) : (
-                <TouchableOpacity
-                  style={styles.secondaryActionButton}
-                  onPress={() => openEditPeriodModal(inspectedDay.cycleId)}
-                  activeOpacity={0.85}
-                >
-                  <Ionicons name="calendar-outline" size={16} color="#FF4D8D" />
-                  <Text style={styles.secondaryActionText}>Regl Düzenle</Text>
-                </TouchableOpacity>
-              )}
-            </View>
+                  {!inspectedDay.isPeriod ? (
+                    <TouchableOpacity
+                      style={styles.secondaryActionButton}
+                      onPress={openCreatePeriodModal}
+                      activeOpacity={0.85}
+                    >
+                      <Ionicons name="water-outline" size={16} color="#FF4D8D" />
+                      <Text style={styles.secondaryActionText}>Regl Başlat</Text>
+                    </TouchableOpacity>
+                  ) : inspectedDay.cycleId && !inspectedDay.isCycleEnd ? (
+                    <TouchableOpacity
+                      style={styles.secondaryActionButton}
+                      onPress={() =>
+                        confirmMarkPeriodEnd(inspectedDay.cycleId, inspectedDay.date, false)
+                      }
+                      activeOpacity={0.85}
+                    >
+                      <Ionicons name="checkmark-circle-outline" size={16} color="#FF4D8D" />
+                      <Text style={styles.secondaryActionText}>Adet Bitişi</Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <TouchableOpacity
+                      style={styles.secondaryActionButton}
+                      onPress={() => openEditPeriodModal(inspectedDay.cycleId)}
+                      activeOpacity={0.85}
+                    >
+                      <Ionicons name="calendar-outline" size={16} color="#FF4D8D" />
+                      <Text style={styles.secondaryActionText}>Regl Düzenle</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
 
-            {inspectedDay.isPeriod && inspectedDay.cycleId && !inspectedDay.isCycleEnd && (
-              <TouchableOpacity
-                style={styles.subActionLink}
-                onPress={() => openEditPeriodModal(inspectedDay.cycleId)}
-                activeOpacity={0.8}
-              >
-                <Ionicons name="options-outline" size={14} color="#FF4D8D" />
-                <Text style={styles.subActionLinkText}>
-                  Başlangıç / bitiş tarihini düzenle veya sil
-                </Text>
-              </TouchableOpacity>
-            )}
+                {inspectedDay.isPeriod && inspectedDay.cycleId && !inspectedDay.isCycleEnd && (
+                  <TouchableOpacity
+                    style={styles.subActionLink}
+                    onPress={() => openEditPeriodModal(inspectedDay.cycleId)}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="options-outline" size={14} color="#FF4D8D" />
+                    <Text style={styles.subActionLinkText}>
+                      Başlangıç / bitiş tarihini düzenle veya sil
+                    </Text>
+                  </TouchableOpacity>
+                )}
 
-            {!inspectedDay.isPeriod && extendableCycle && (
-              <TouchableOpacity
-                style={styles.subActionLink}
-                onPress={() =>
-                  confirmMarkPeriodEnd(
-                    extendableCycle.cycle.id,
-                    inspectedDay.date,
-                    true,
-                  )
-                }
-                activeOpacity={0.8}
-              >
-                <Ionicons name="add-circle-outline" size={14} color="#FF4D8D" />
-                <Text style={styles.subActionLinkText}>
-                  Devam eden regl bitişini bu güne uzat ({extendableCycle.dayNumber}. gün)
-                </Text>
-              </TouchableOpacity>
+                {!inspectedDay.isPeriod && extendableCycle && (
+                  <TouchableOpacity
+                    style={styles.subActionLink}
+                    onPress={() =>
+                      confirmMarkPeriodEnd(
+                        extendableCycle.cycle.id,
+                        inspectedDay.date,
+                        true,
+                      )
+                    }
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="add-circle-outline" size={14} color="#FF4D8D" />
+                    <Text style={styles.subActionLinkText}>
+                      Devam eden regl bitişini bu güne uzat ({extendableCycle.dayNumber}. gün)
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </>
             )}
           </View>
         )}

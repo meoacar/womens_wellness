@@ -190,6 +190,10 @@ model User {
   qnaQuota             QnaQuota?
   contentReports       ContentReport[]      @relation("ContentReports")
   reviewedReports      ContentReport[]      @relation("ReviewedReports")
+  blockedUsers         UserBlock[]          @relation("UserBlocksInitiated")
+  blockedByUsers       UserBlock[]          @relation("UserBlocksReceived")
+  aiMessageReports     AiMessageReport[]    @relation("AiMessageReports")
+  reviewedAiReports    AiMessageReport[]    @relation("ReviewedAiReports")
   
   // Gamification Relations
   userAchievements     UserAchievement[]
@@ -1011,6 +1015,7 @@ model Question {
   status          QuestionStatus    @default(OPEN)
   viewCount       Int               @default(0)
   isPremium       Boolean           @default(false) // Premium user badge
+  imageUrls       String[]          @default([])
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
   
@@ -1033,6 +1038,7 @@ model Answer {
   content         String          @db.Text
   isBestAnswer    Boolean         @default(false)
   voteCount       Int             @default(0)
+  imageUrls       String[]        @default([])
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt
   
@@ -1208,6 +1214,42 @@ model ContentReport {
   @@index([contentId, contentType])
 }
 
+model UserBlock {
+  id            String   @id @default(cuid())
+  blockerId     String
+  blockedUserId String
+  reason        String?
+  createdAt     DateTime @default(now())
+
+  blocker       User     @relation("UserBlocksInitiated", fields: [blockerId], references: [id], onDelete: Cascade)
+  blockedUser   User     @relation("UserBlocksReceived", fields: [blockedUserId], references: [id], onDelete: Cascade)
+
+  @@unique([blockerId, blockedUserId])
+  @@index([blockerId])
+  @@index([blockedUserId])
+}
+
+model AiMessageReport {
+  id             String       @id @default(cuid())
+  userId         String
+  conversationId String?
+  messageId      String?
+  messageContent String       @db.Text
+  reason         String
+  description    String?      @db.Text
+  status         ReportStatus @default(PENDING)
+  reviewedBy     String?
+  reviewedAt     DateTime?
+  moderatorNote  String?      @db.Text
+  createdAt      DateTime     @default(now())
+
+  user           User         @relation("AiMessageReports", fields: [userId], references: [id], onDelete: Cascade)
+  reviewer       User?        @relation("ReviewedAiReports", fields: [reviewedBy], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+  @@index([userId, createdAt])
+}
+
 // Quota Model
 model QnaQuota {
   id                String   @id @default(cuid())
@@ -1217,6 +1259,9 @@ model QnaQuota {
   freeUserLimit     Int      @default(5)
   premiumUserLimit  Int      @default(20)
   resetsAt          DateTime
+  weekKey           String?
+  weeklyImagesUsed  Int      @default(0)
+  imageResetsAt     DateTime?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
   

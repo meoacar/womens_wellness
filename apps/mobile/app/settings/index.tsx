@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import appConfig from '../../app.json';
 import {
   View,
   Text,
@@ -18,13 +19,14 @@ import { useRouter } from 'expo-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
+import * as DocumentPicker from 'expo-document-picker';
 import * as SecureStore from 'expo-secure-store';
 import * as LocalAuthentication from 'expo-local-authentication';
 import { useAuthStore } from '@/store/authStore';
 import { useThemeStore } from '@/store/themeStore';
-import { userService, qnaService, quotaService, postpartumService } from '@/services/api';
+import { api, userService, qnaService, quotaService, postpartumService } from '@/services/api';
 import { healthConnectSyncService } from '@/services/healthConnectSync';
 import { pedometerSyncService } from '@/services/pedometerSync';
 import { gamificationService } from '@/services/gamification';
@@ -39,8 +41,6 @@ import { useFeatureFlags } from '@/hooks/useFeatureFlags';
 import { getZodiacSign, ZODIAC_SIGNS } from '@/utils/astrology';
 import type { QnaQuota } from '@/types/qna';
 import type { GamificationStats } from '@/types/gamification';
-
-const { cacheDirectory, writeAsStringAsync } = FileSystem as any;
 
 export default function SettingsScreen() {
   const router = useRouter();
@@ -84,6 +84,8 @@ export default function SettingsScreen() {
 
   const [isExporting, setIsExporting] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isEmailBackingUp, setIsEmailBackingUp] = useState(false);
+  const [isRestoring, setIsRestoring] = useState(false);
   const [showPinSetup, setShowPinSetup] = useState(false);
   const [showPinChange, setShowPinChange] = useState(false);
   const [showPinDisable, setShowPinDisable] = useState(false);
@@ -228,18 +230,74 @@ export default function SettingsScreen() {
     }
   };
 
+  const handleEmailBackup = async () => {
+    try {
+      setIsEmailBackingUp(true);
+      const res = await api.post<{ sentTo: string }>('/users/me/backup-email');
+      Alert.alert(
+        'Yedek Gönderildi',
+        `Tüm döngü ve sağlık verileriniz JSON yedeği olarak ${res.sentTo || user?.email || 'e-posta adresinize'} gönderildi.`,
+      );
+    } catch (error: any) {
+      Alert.alert('Hata', error?.message || 'Yedek e-posta gönderilemedi');
+    } finally {
+      setIsEmailBackingUp(false);
+    }
+  };
+
+  const handleRestoreBackup = async () => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['application/json', 'text/plain', '*/*'],
+        copyToCacheDirectory: true,
+      });
+
+      if (result.canceled || !result.assets?.[0]?.uri) {
+        return;
+      }
+
+      setIsRestoring(true);
+      const rawContent = await FileSystem.readAsStringAsync(result.assets[0].uri);
+      const parsed = JSON.parse(rawContent);
+      const res = await api.post<{
+        restoredCycles: number;
+        restoredDailyLogs: number;
+        restoredWaterLogs: number;
+        restoredSleepLogs: number;
+      }>('/users/me/restore-backup', parsed);
+
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['me'] }),
+        queryClient.invalidateQueries({ queryKey: ['cycles'] }),
+        queryClient.invalidateQueries({ queryKey: ['daily-logs'] }),
+      ]);
+
+      Alert.alert(
+        'Geri Yükleme Tamamlandı',
+        `${res.restoredCycles} döngü, ${res.restoredDailyLogs} günlük kayıt, ${res.restoredWaterLogs} su kaydı ve ${res.restoredSleepLogs} uyku kaydı hesabınıza aktarıldı.`,
+      );
+    } catch (error: any) {
+      Alert.alert(
+        'Geri Yükleme Başarısız',
+        error?.message || 'Seçilen dosya geçerli bir Kadın Atlası JSON yedeği değil.',
+      );
+    } finally {
+      setIsRestoring(false);
+    }
+  };
+
   const handleDownloadData = async () => {
     try {
       setIsExporting(true);
       const exportData = await userService.exportMyData();
       const filename = `womens-wellness-data-${new Date().toISOString().split('T')[0]}.json`;
 
-      if (!cacheDirectory) {
+      if (!FileSystem.cacheDirectory) {
         throw new Error('Dosya sistemi kullanılamıyor');
       }
 
-      const fileUri = cacheDirectory + filename;
-      await writeAsStringAsync(fileUri, JSON.stringify(exportData, null, 2));
+      const fileUri = FileSystem.cacheDirectory + filename;
+      await FileSystem.writeAsStringAsync(fileUri, JSON.stringify(exportData, null, 2));
 
       const isAvailable = await Sharing.isAvailableAsync();
       if (isAvailable) {
@@ -887,6 +945,7 @@ export default function SettingsScreen() {
             icon: 'sync-outline',
             iconColor: '#06B6D4',
             title: 'Verileri Senkronize Et',
+            subtitle: `Hesabınıza (${user?.email || 'sunucu'}) bağlı · Yeni telefonda otomatik yüklenir`,
             onPress: handleSyncData,
             rightElement: isSyncing ? (
               <ActivityIndicator size="small" color={theme.colors.primary} />
@@ -900,6 +959,33 @@ export default function SettingsScreen() {
             rightElement: isExporting ? (
               <ActivityIndicator size="small" color={theme.colors.primary} />
             ) : undefined,
+          })}
+          {renderSettingRow({
+            icon: 'mail-outline',
+            iconColor: '#EC4899',
+            title: 'Yedeğimi E-postama Gönder',
+            subtitle: 'Tüm verilerinizi JSON eki olarak mail kutunuza yedekleyin',
+            onPress: handleEmailBackup,
+            rightElement: isEmailBackingUp ? (
+              <ActivityIndicator size="small" color={theme.colors.primary} />
+            ) : undefined,
+          })}
+          {renderSettingRow({
+            icon: 'cloud-upload-outline',
+            iconColor: '#8B5CF6',
+            title: 'Yedek Dosyasından Geri Yükle',
+            subtitle: 'E-posta veya cihazınızdaki JSON yedeğini hesabınıza aktarın',
+            onPress: handleRestoreBackup,
+            rightElement: isRestoring ? (
+              <ActivityIndicator size="small" color={theme.colors.primary} />
+            ) : undefined,
+          })}
+          {renderSettingRow({
+            icon: 'ban-outline',
+            iconColor: '#EF4444',
+            title: 'Engellenen Kullanıcılar',
+            subtitle: 'Toplulukta engellediğiniz kişileri yönetin',
+            onPress: () => router.push('/community/blocked-users'),
           })}
           {renderSettingRow({
             icon: 'shield-checkmark-outline',
@@ -947,8 +1033,8 @@ export default function SettingsScreen() {
           {renderSettingRow({
             icon: 'information-circle-outline',
             iconColor: '#64748B',
-            title: 'Hakkında',
-            subtitle: 'Versiyon 1.0.0',
+            title: 'Hakkında & Sürüm',
+            subtitle: `Versiyon ${appConfig.expo.version}`,
             onPress: () => router.push('/settings/about' as any),
             isLast: true,
           })}

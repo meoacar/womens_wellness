@@ -1166,4 +1166,45 @@ export class AdminService {
             receipt,
         };
     }
+
+    async getAiMessageReports(status?: string) {
+        return this.prisma.aiMessageReport.findMany({
+            where: status ? { status: status as any } : undefined,
+            orderBy: { createdAt: 'desc' },
+            take: 200,
+            include: {
+                user: {
+                    select: {
+                        id: true,
+                        email: true,
+                        username: true,
+                    },
+                },
+                reviewer: {
+                    select: {
+                        id: true,
+                        email: true,
+                        username: true,
+                    },
+                },
+            },
+        });
+    }
+
+    async updateAiMessageReport(
+        reportId: string,
+        reviewerId: string,
+        status: 'PENDING' | 'REVIEWED' | 'RESOLVED' | 'DISMISSED',
+        moderatorNote?: string,
+    ) {
+        return this.prisma.aiMessageReport.update({
+            where: { id: reportId },
+            data: {
+                status,
+                moderatorNote: moderatorNote ?? null,
+                reviewedBy: reviewerId,
+                reviewedAt: new Date(),
+            },
+        });
+    }
 }

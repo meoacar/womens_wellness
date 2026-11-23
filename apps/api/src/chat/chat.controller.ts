@@ -367,4 +367,22 @@ export class ChatController {
     );
     return { conversationId, messages };
   }
+
+  @Post('report')
+  async reportAiMessage(
+    @CurrentUser() user: any,
+    @Body()
+    body: {
+      messageId?: string;
+      conversationId?: string;
+      messageContent: string;
+      reason: string;
+      description?: string;
+    },
+  ) {
+    if (!body?.messageContent || !body?.reason) {
+      throw new BadRequestException('messageContent ve reason zorunludur');
+    }
+    return this.chatService.reportMessage(user.id, body);
+  }
 }

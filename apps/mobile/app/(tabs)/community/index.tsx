@@ -10,13 +10,15 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useState, useCallback, useMemo } from 'react';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
+import { useQueryClient } from '@tanstack/react-query';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '@/hooks/useTheme';
 import { useFeatureFlags } from '@/hooks/useFeatureFlags';
 import { useInfiniteQuestions, useQuestions, useFavoriteQuestions } from '@/hooks/useQna';
 import { useQnaStore } from '@/store/qnaStore';
+import { qnaService } from '@/services/api';
 import {
     QuestionCard,
     QuestionListSkeleton,
@@ -61,6 +63,17 @@ const CATEGORIES: ReadonlyArray<{
 export default function CommunityIndexScreen() {
     const theme = useTheme();
     const router = useRouter();
+    const queryClient = useQueryClient();
+
+    useFocusEffect(
+        useCallback(() => {
+            const current = queryClient.getQueryData<{ unreadCount: number }>(['qna', 'unread-count']);
+            if ((current?.unreadCount ?? 0) > 0) {
+                queryClient.setQueryData(['qna', 'unread-count'], { unreadCount: 0 });
+                qnaService.markNotificationsRead().catch(() => {});
+            }
+        }, [queryClient]),
+    );
     const styles = createStyles(theme);
     const { isConnected } = useNetworkStatus();
     const { flags } = useFeatureFlags();

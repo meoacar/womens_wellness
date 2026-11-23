@@ -16,10 +16,19 @@ import {
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { Throttle } from '@nestjs/throttler';
+import * as fs from 'fs';
+import * as path from 'path';
 import { QnaService } from './qna.service';
 import { CreateQuestionDto, AdminCreateQuestionDto, UpdateQuestionDto, AdminUpdateQuestionDto, QuestionFiltersDto } from './dto';
 import { OwnerGuard, AdminGuard } from './guards';
 import { SanitizePipe } from './pipes';
+import {
+    MAX_UPLOAD_IMAGE_BYTES,
+    generateSafeUploadFilename,
+    readStreamWithLimit,
+    resolveUploadsDir,
+    sanitizeAndReencodeProfileImage,
+} from '../common/utils/uploads';
 
 @Controller('qna/questions')
 @UseGuards(AuthGuard('jwt'))
@@ -42,6 +51,50 @@ export class QuestionsController {
     async createQuestion(@Request() req, @Body() dto: CreateQuestionDto) {
         const userId = req.user.id || req.user.sub;
         return this.qnaService.createQuestion(userId, dto);
+    }
+
+    @Post('upload-image')
+    @Throttle({ default: { limit: 20, ttl: 3600000 } })
+    async uploadImage(@Request() req: any) {
+        const data = await req.file();
+        if (!data) {
+            throw new BadRequestException('Resim dosyası gereklidir');
+        }
+
+        let rawBuffer: Buffer;
+        try {
+            rawBuffer = await readStreamWithLimit(data.file, MAX_UPLOAD_IMAGE_BYTES);
+        } catch (readError: any) {
+            throw new BadRequestException(
+                readError?.message || 'Resim boyutu sınırı aşıldı',
+            );
+        }
+
+        let processedImage;
+        try {
+            processedImage = await sanitizeAndReencodeProfileImage(rawBuffer);
+        } catch {
+            throw new BadRequestException(
+                'Geçersiz veya desteklenmeyen resim formatı (jpg, png, gif, webp)',
+            );
+        }
+
+        const filename = generateSafeUploadFilename(processedImage.extension);
+        const uploadDir = path.join(resolveUploadsDir(), 'qna');
+        await fs.promises.mkdir(uploadDir, { recursive: true });
+
+        const filePath = path.join(uploadDir, filename);
+        await fs.promises.writeFile(filePath, processedImage.buffer, { mode: 0o644 });
+
+        const relativePath = path.posix.join('qna', filename);
+        const defaultApiBase =
+            process.env.NODE_ENV === 'production'
+                ? 'https://api.kadinatlasi.com'
+                : 'http://localhost:4000';
+        const baseUrl = (process.env.API_BASE_URL || defaultApiBase).replace(/\/+$/, '');
+        return {
+            imageUrl: `${baseUrl}/uploads/${relativePath}`,
+        };
     }
 
     @Get()

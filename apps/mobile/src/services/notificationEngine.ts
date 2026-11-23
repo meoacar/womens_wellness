@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Notifications from 'expo-notifications';
 import { Alert, Linking, PermissionsAndroid, Platform } from 'react-native';
+import appJson from '../../app.json';
 import {
   MOTIVATION_NOTIFICATIONS,
   PERIOD_SUPPORT_NOTIFICATIONS,
@@ -45,7 +46,6 @@ export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettingsState = {
 };
 
 const SETTINGS_STORAGE_KEY = '@notification_settings_v1';
-const FALLBACK_EAS_PROJECT_ID = '76d59681-ec69-472c-b1f5-b38abee8a3d7';
 
 let pendingSyncInFlight = false;
 
@@ -224,6 +224,7 @@ export async function registerPushTokenWithBackend(): Promise<string | null> {
         const deviceToken = await Notifications.getDevicePushTokenAsync();
         if (typeof deviceToken?.data === 'string' && deviceToken.data.trim()) {
           await remindersService.registerPushToken(deviceToken.data.trim()).catch(() => {});
+          await AsyncStorage.setItem('@remote_push_registered', 'true').catch(() => {});
           return deviceToken.data.trim();
         }
       } catch {
@@ -235,7 +236,7 @@ export async function registerPushTokenWithBackend(): Promise<string | null> {
     const projectId =
       envProjectId && !envProjectId.startsWith('__')
         ? envProjectId
-        : FALLBACK_EAS_PROJECT_ID;
+        : appJson?.expo?.extra?.eas?.projectId;
 
     const tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
     if (tokenData?.data) {

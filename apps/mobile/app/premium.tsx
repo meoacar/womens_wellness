@@ -409,6 +409,29 @@ export default function PremiumScreen() {
                 <View style={styles.section}>
                     <FAQSection faqs={paywallConfig?.faqs} />
                 </View>
+
+                {/* Ön Bilgilendirme & Abonelik Koşulları */}
+                <View style={styles.preInfoCard}>
+                    <View style={styles.preInfoHeader}>
+                        <Ionicons name="document-text-outline" size={16} color={theme.colors.primary} />
+                        <Text style={styles.preInfoTitle}>Ön Bilgilendirme ve Abonelik Koşulları</Text>
+                    </View>
+                    <Text style={styles.preInfoBody}>
+                        • Seçilen plan ({selectedPrice} / {selectedTier === 'YEARLY' ? 'yıl' : 'ay'}) onayınızla birlikte Google Play / App Store hesabınızdan tahsil edilir.{'\n'}
+                        • Ücretsiz deneme varsa, deneme bitiminden en az 24 saat önce iptal edilmediği sürece abonelik otomatik yenilenir.{'\n'}
+                        • Aboneliğinizi dilediğiniz zaman cihazınızın mağaza abonelik ayarlarından iptal edebilirsiniz.{'\n'}
+                        • Dijital içerik ve hizmetlerde anında ifa başladığından yasal cayma istisnaları geçerlidir.
+                    </Text>
+                    <View style={styles.preInfoLinks}>
+                        <TouchableOpacity onPress={() => router.push('/settings/terms-of-service' as any)}>
+                            <Text style={styles.preInfoLink}>Kullanım Koşulları</Text>
+                        </TouchableOpacity>
+                        <Text style={styles.preInfoDot}>·</Text>
+                        <TouchableOpacity onPress={() => router.push('/settings/privacy-policy' as any)}>
+                            <Text style={styles.preInfoLink}>Gizlilik &amp; KVKK</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
             </ScrollView>
 
             {/* Sticky Bottom CTA Bar */}
@@ -726,5 +749,47 @@ const createStyles = (theme: ReturnType<typeof useTheme>) =>
             fontSize: 11,
             color: theme.colors.textLight,
             textAlign: 'center',
+        },
+        preInfoCard: {
+            marginHorizontal: 16,
+            marginTop: 8,
+            marginBottom: 16,
+            padding: 14,
+            borderRadius: 16,
+            backgroundColor: theme.colors.backgroundCard,
+            borderWidth: 1,
+            borderColor: theme.colors.border,
+            gap: 8,
+        },
+        preInfoHeader: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 6,
+        },
+        preInfoTitle: {
+            fontSize: 13,
+            fontWeight: '800',
+            color: theme.colors.text,
+        },
+        preInfoBody: {
+            fontSize: 11.5,
+            lineHeight: 17,
+            color: theme.colors.textSecondary,
+        },
+        preInfoLinks: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 8,
+            marginTop: 2,
+        },
+        preInfoLink: {
+            fontSize: 11.5,
+            fontWeight: '700',
+            color: theme.colors.primary,
+            textDecorationLine: 'underline',
+        },
+        preInfoDot: {
+            fontSize: 11.5,
+            color: theme.colors.textLight,
         },
     });

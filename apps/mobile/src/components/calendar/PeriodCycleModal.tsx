@@ -369,7 +369,7 @@ export function PeriodCycleModal({
                   mode="date"
                   display={Platform.OS === 'ios' ? 'spinner' : 'default'}
                   locale="tr-TR"
-                  maximumDate={addDays(todayNormalized, 1)}
+                  maximumDate={todayNormalized}
                   onChange={(_, date) => {
                     if (Platform.OS !== 'ios') {
                       setShowStartPicker(false);
@@ -493,7 +493,11 @@ export function PeriodCycleModal({
                       display={Platform.OS === 'ios' ? 'spinner' : 'default'}
                       locale="tr-TR"
                       minimumDate={startDate}
-                      maximumDate={addDays(startDate, 14)}
+                      maximumDate={
+                        addDays(startDate, 14) > todayNormalized
+                          ? todayNormalized
+                          : addDays(startDate, 14)
+                      }
                       onChange={(_, date) => {
                         if (Platform.OS !== 'ios') {
                           setShowEndPicker(false);

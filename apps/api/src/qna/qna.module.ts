@@ -16,12 +16,15 @@ import { ModerationController } from './moderation.controller';
 import { NotificationController } from './notification.controller';
 import { AnalyticsController } from './analytics.controller';
 import { SharingController } from './sharing.controller';
+import { CommunitySettingsService } from './community-settings.service';
+import { CommunitySettingsController } from './community-settings.controller';
 import { PrismaModule } from '../prisma/prisma.module';
 import { RemindersModule } from '../reminders/reminders.module';
+import { GamificationModule } from '../gamification/gamification.module';
 import { OwnerGuard, QuestionOwnerGuard, AdminGuard } from './guards';
 
 @Module({
-    imports: [PrismaModule, RemindersModule],
+    imports: [PrismaModule, RemindersModule, GamificationModule],
     controllers: [
         QuestionsController,
         AnswersController,
@@ -33,6 +36,7 @@ import { OwnerGuard, QuestionOwnerGuard, AdminGuard } from './guards';
         NotificationController,
         AnalyticsController,
         SharingController,
+        CommunitySettingsController,
     ],
     providers: [
         QnaService,
@@ -42,6 +46,7 @@ import { OwnerGuard, QuestionOwnerGuard, AdminGuard } from './guards';
         QnaNotificationService,
         AnalyticsService,
         SharingService,
+        CommunitySettingsService,
         // Guards
         OwnerGuard,
         QuestionOwnerGuard,
@@ -55,6 +60,7 @@ import { OwnerGuard, QuestionOwnerGuard, AdminGuard } from './guards';
         QnaNotificationService,
         AnalyticsService,
         SharingService,
+        CommunitySettingsService,
     ],
 })
 export class QnaModule { }

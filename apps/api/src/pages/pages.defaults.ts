@@ -161,15 +161,15 @@ Sağlık verilerinizin yapay zeka ile işlenmesinde en sıkı gizlilik kurallar�
 - Verileriniz yalnızca hizmetin teknik olarak çalışması için gerekli olduğu ölçüde ve KVKK m. 8–9 güvenlik tedbirleriyle:
   1. **Barındırma ve Sunucu Altyapısı:** Güvenlik duvarı arkasında izole edilmiş veritabanı ve uygulama sunucusu sağlayıcısı,
   2. **Yapay Zeka Yanıt Motoru:** Yalnızca NOVA AI sohbet özelliğini kullandığınızda yanıt üretimi için kurumsal Google Gemini API servisi,
-  3. **Ödeme ve Abonelik Doğrulama:** Yalnızca abonelik durumunu doğrulamak amacıyla Apple App Store, Google Play Store ve RevenueCat altyapısı (sağlık verisi aktarılmaz),
+  3. **Ödeme ve Abonelik Doğrulama:** Yalnızca abonelik durumunu doğrulamak amacıyla Apple App Store ve Google Play Store doğrudan mağaza faturalandırma/makbuz doğrulama servisleri (sağlık verisi aktarılmaz),
   4. **Yasal Zorunluluk:** Kanunen yetkili mahkeme ve kamu kurumlarının bağlayıcı kararları kapsamında aktarılabilir.
 
 ## 6. Veri Saklama Süreleri ve İmha Politikası
 
 - **Aktif Üyelik Süresince:** Hesap ve sağlık/döngü verileriniz, üyeliğiniz devam ettiği ve açık rızanız yürürlükte olduğu sürece saklanır.
-- **Hesap Silme Talebi Sonrasında:** Mobil uygulama içinden (**Profilim > Hesabı Sil**) veya \`kvkk@kadinatlasi.com\` üzerinden hesabınızı sildiğinizde, tüm sağlık, döngü, gebelik ve sohbet verileriniz aktif üretim veritabanından **derhal** silinir; şifreli felaket kurtarma yedeklerinden ise **en geç 30 (otuz) gün** içinde kalıcı olarak imha edilir.
+- **Hesap Silme Talebi Sonrasında:** Mobil uygulama içinden (**Ayarlar > Verilerim > Hesabı Sil**), [Hesap ve Veri Silme Formu](https://kadinatlasi.com/hesap-silme) veya \`kvkk@kadinatlasi.com\` üzerinden hesabınızı sildiğinizde; kullanıcı hesabınız, sağlık/döngü/gebelik/sohbet verileriniz ve uygulama veritabanındaki abonelik/işlem kayıtlarınız aktif üretim veritabanından **derhal (cascade silme ile)** silinir. Günlük şifreli/sıkıştırılmış veritabanı yedekleri 7 günlük döngüyle yenilenir ve silinen hesap kayıtları **en geç 30 (otuz) gün** içinde tüm yedeklerden kalıcı olarak temizlenir.
 - **İletişim ve Destek Kayıtları:** Başvurunun çözümlenmesinden itibaren olası hukuki uyuşmazlık zamanaşımı süresi boyunca (azami 3 yıl) saklanır.
-- **Trafik ve Abonelik Kayıtları:** 5651 sayılı Kanun uyarınca trafik logları **2 yıl**, elektronik ticaret ve abonelik/fatura kayıtları ilgili vergi ve ticaret mevzuatı uyarınca **10 yıl** süreyle izole olarak saklanır ve süre sonunda resen imha edilir.
+- **Trafik Logları ve Mağaza Fatura Kayıtları:** 5651 sayılı Kanun uyarınca sunucu erişim logları **2 yıl** süreyle saklanır. Ödeme ve fatura kayıtları ise doğrudan ilgili uygulama mağazaları (Google Play Store / Apple App Store) tarafından kendi vergi ve ticaret mevzuatları kapsamında tutulur.
 
 ## 7. Veri Güvenliği Tedbirleri ve Self-Servis Veri Kontrolü
 
@@ -247,13 +247,13 @@ Processed strictly based on your **explicit consent** to provide personal tracki
 ## 5. Data Sharing & Third-Party Service Providers
 
 - **Strict No-Sale Policy:** We **never sell, rent, or share** your health, cycle, or pregnancy data with advertising networks, data brokers, or insurance companies.
-- Data is shared strictly on a need-to-operate basis with: (a) Isolated cloud hosting infrastructure, (b) Enterprise Google Gemini API during active NOVA AI chat sessions, (c) Apple App Store / Google Play / RevenueCat for subscription status verification (no health data shared), and (d) Competent judicial authorities when legally mandated.
+- Data is shared strictly on a need-to-operate basis with: (a) Isolated cloud hosting infrastructure, (b) Enterprise Google Gemini API during active NOVA AI chat sessions, (c) Apple App Store and Google Play Store direct receipt verification services for subscription status verification (no health data shared), and (d) Competent judicial authorities when legally mandated.
 
 ## 6. Data Retention Schedule & Deletion Policy
 
 - **Active Accounts:** Retained while your account remains active.
-- **Upon Account Deletion:** When you delete your account via **Profile > Delete Account** or by emailing \`kvkk@kadinatlasi.com\`, all health, cycle, pregnancy, and chat records are **immediately deleted** from the production database and permanently purged from encrypted backups within **30 days**.
-- **Security & Financial Logs:** Traffic logs are retained for 2 years (Law No. 5651) and subscription invoice records for up to 10 years under statutory tax laws before automatic destruction.
+- **Upon Account Deletion:** When you delete your account via **Settings > My Data > Delete Account**, [kadinatlasi.com/hesap-silme](https://kadinatlasi.com/hesap-silme), or by emailing \`kvkk@kadinatlasi.com\`, your account, health/cycle/pregnancy/chat records, and app-side subscription records are **immediately deleted (cascade delete)** from the production database. Rolling daily database backups are retained for 7 days and purged within at most **30 days**.
+- **Access Logs & App Store Billing Records:** Server access logs are retained for up to 2 years under Law No. 5651. Statutory payment and tax receipts are maintained directly by Google Play Store / Apple App Store under applicable tax laws.
 
 ## 7. Security Measures & Self-Service Controls
 

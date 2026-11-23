@@ -44,12 +44,14 @@ export function PinLockView({ onUnlocked }: PinLockViewProps) {
   const [errorText, setErrorText] = useState<string | null>(null);
   const [biometricAvailable, setBiometricAvailable] = useState(false);
 
-  const handleBiometricUnlock = useCallback(async () => {
+  const handleBiometricUnlock = useCallback(async (isAutoTrigger = false) => {
     try {
       const res = await LocalAuthentication.authenticateAsync({
         promptMessage: 'Kadın Atlası kilidini aç',
+        cancelLabel: 'PIN Kullan',
         fallbackLabel: 'PIN Kullan',
-        cancelLabel: 'İptal',
+        disableDeviceFallback: true,
+        requireConfirmation: false,
       });
       if (res.success) {
         setPinStatus(true, true);
@@ -59,14 +61,19 @@ export function PinLockView({ onUnlocked }: PinLockViewProps) {
         } else {
           router.replace('/(tabs)/home');
         }
+      } else if (!isAutoTrigger && res.error && res.error !== 'user_cancel' && res.error !== 'app_cancel') {
+        setErrorText('Biyometrik doğrulama başlatılamadı. PIN kodunuzu girin.');
       }
     } catch {
-      // Ignore biometric cancellation/errors
+      if (!isAutoTrigger) {
+        setErrorText('Biyometrik doğrulama kullanılamıyor. PIN kodunuzu girin.');
+      }
     }
   }, [onUnlocked, router, setPinStatus]);
 
   useEffect(() => {
     let mounted = true;
+    let timer: ReturnType<typeof setTimeout> | null = null;
     (async () => {
       try {
         const enabled = await SecureStore.getItemAsync('biometricEnabled');
@@ -77,7 +84,12 @@ export function PinLockView({ onUnlocked }: PinLockViewProps) {
         ]);
         if (mounted && hasHw && enrolled) {
           setBiometricAvailable(true);
-          void handleBiometricUnlock();
+          // Delay slightly on cold start so Android Activity window has focus for BiometricPrompt
+          timer = setTimeout(() => {
+            if (mounted) {
+              void handleBiometricUnlock(true);
+            }
+          }, 350);
         }
       } catch {
         // Ignore
@@ -85,6 +97,7 @@ export function PinLockView({ onUnlocked }: PinLockViewProps) {
     })();
     return () => {
       mounted = false;
+      if (timer) clearTimeout(timer);
     };
   }, [handleBiometricUnlock]);
 
@@ -269,7 +282,7 @@ export function PinLockView({ onUnlocked }: PinLockViewProps) {
         {biometricAvailable && (
           <TouchableOpacity
             activeOpacity={0.8}
-            onPress={handleBiometricUnlock}
+            onPress={() => handleBiometricUnlock(false)}
             style={{
               flexDirection: 'row',
               alignItems: 'center',

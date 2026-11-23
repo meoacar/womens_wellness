@@ -8,12 +8,18 @@ import {
     ActivityIndicator,
     KeyboardAvoidingView,
     Platform,
+    Image,
+    ScrollView,
 } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
 import { useTheme } from '@/hooks/useTheme';
+import { usePremium } from '@/hooks/usePremium';
+import { useQnaQuota } from '@/hooks/useQna';
 import { Ionicons } from '@expo/vector-icons';
+import { qnaService } from '@/services/api';
 
 interface AnswerInputProps {
-    onSubmit: (content: string) => Promise<void>;
+    onSubmit: (content: string, imageUrls?: string[]) => Promise<void>;
     onCancel: () => void;
     isSubmitting?: boolean;
     placeholder?: string;
@@ -30,13 +36,48 @@ export function AnswerInput({
     maxLength = 5000,
 }: AnswerInputProps) {
     const theme = useTheme();
+    const { isPremium } = usePremium();
+    const { data: qnaQuota } = useQnaQuota();
+    const weeklyImageLimit = qnaQuota?.imageLimit ?? (isPremium ? 5 : 2);
+    const maxImages = qnaQuota?.imageRemaining ?? weeklyImageLimit;
     const styles = createStyles(theme);
     const [content, setContent] = useState('');
+    const [selectedImages, setSelectedImages] = useState<string[]>([]);
+    const [isUploadingImages, setIsUploadingImages] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
     const characterCount = content.length;
     const isValid = characterCount >= minLength && characterCount <= maxLength;
     const showWarning = characterCount > maxLength * 0.9;
+
+    const handlePickImage = async () => {
+        if (selectedImages.length >= maxImages) {
+            setError(
+                isPremium
+                    ? `Haftalık kalan resim hakkınız: ${maxImages}/${weeklyImageLimit} (hafta bitiminde sıfırlanır)`
+                    : `Ücretsiz üyeler haftada ${weeklyImageLimit} resim ekleyebilir (kalan: ${maxImages} · Premium ile 5)`,
+            );
+            return;
+        }
+        const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!perm.granted) {
+            setError('Galeri izni gerekli');
+            return;
+        }
+        const result = await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ['images'],
+            allowsEditing: true,
+            quality: 0.8,
+        });
+        if (!result.canceled && result.assets?.[0]?.uri) {
+            setSelectedImages((prev) => [...prev, result.assets[0].uri].slice(0, maxImages));
+            setError(null);
+        }
+    };
+
+    const handleRemoveImage = (idx: number) => {
+        setSelectedImages((prev) => prev.filter((_, i) => i !== idx));
+    };
 
     const handleSubmit = async () => {
         setError(null);
@@ -57,16 +98,28 @@ export function AnswerInput({
         }
 
         try {
-            await onSubmit(content.trim());
+            let uploadedUrls: string[] | undefined;
+            if (selectedImages.length > 0) {
+                setIsUploadingImages(true);
+                const results = await Promise.all(
+                    selectedImages.map((uri) => qnaService.uploadImage(uri)),
+                );
+                uploadedUrls = results.map((r) => r.imageUrl);
+                setIsUploadingImages(false);
+            }
+            await onSubmit(content.trim(), uploadedUrls);
             setContent('');
+            setSelectedImages([]);
             setError(null);
         } catch (err: any) {
+            setIsUploadingImages(false);
             setError(err.message || 'Cevap gönderilemedi');
         }
     };
 
     const handleCancel = () => {
         setContent('');
+        setSelectedImages([]);
         setError(null);
         onCancel();
     };
@@ -123,12 +176,43 @@ export function AnswerInput({
                     )}
                 </View>
 
+                {/* Selected Images Preview */}
+                {selectedImages.length > 0 && (
+                    <ScrollView
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        contentContainerStyle={styles.imagesPreviewRow}
+                    >
+                        {selectedImages.map((uri, idx) => (
+                            <View key={`${uri}-${idx}`} style={styles.imagePreviewBox}>
+                                <Image source={{ uri }} style={styles.imagePreview} />
+                                <TouchableOpacity
+                                    style={styles.removeImageBtn}
+                                    onPress={() => handleRemoveImage(idx)}
+                                >
+                                    <Ionicons name="close-circle" size={18} color="#EF4444" />
+                                </TouchableOpacity>
+                            </View>
+                        ))}
+                    </ScrollView>
+                )}
+
                 {/* Action Buttons */}
                 <View style={styles.actions}>
                     <TouchableOpacity
+                        style={styles.addImageBtn}
+                        onPress={handlePickImage}
+                        disabled={isSubmitting || isUploadingImages || selectedImages.length >= maxImages}
+                        activeOpacity={0.7}
+                    >
+                        <Ionicons name="image-outline" size={18} color={theme.colors.primary} />
+                        <Text style={styles.addImageBtnText}>Resim ({selectedImages.length}/{maxImages})</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
                         style={styles.cancelButton}
                         onPress={handleCancel}
-                        disabled={isSubmitting}
+                        disabled={isSubmitting || isUploadingImages}
                         activeOpacity={0.7}
                     >
                         <Text style={styles.cancelButtonText}>İptal</Text>
@@ -137,13 +221,13 @@ export function AnswerInput({
                     <TouchableOpacity
                         style={[
                             styles.submitButton,
-                            (!isValid || isSubmitting) && styles.submitButtonDisabled,
+                            (!isValid || isSubmitting || isUploadingImages) && styles.submitButtonDisabled,
                         ]}
                         onPress={handleSubmit}
-                        disabled={!isValid || isSubmitting}
+                        disabled={!isValid || isSubmitting || isUploadingImages}
                         activeOpacity={0.7}
                     >
-                        {isSubmitting ? (
+                        {isSubmitting || isUploadingImages ? (
                             <ActivityIndicator size="small" color="#fff" />
                         ) : (
                             <>
@@ -187,6 +271,41 @@ const createStyles = (theme: ReturnType<typeof useTheme>) =>
         },
         inputError: {
             borderColor: theme.colors.error,
+        },
+        imagesPreviewRow: {
+            flexDirection: 'row',
+            gap: 8,
+            marginTop: 10,
+        },
+        imagePreviewBox: {
+            position: 'relative',
+        },
+        imagePreview: {
+            width: 64,
+            height: 64,
+            borderRadius: 10,
+        },
+        removeImageBtn: {
+            position: 'absolute',
+            top: -6,
+            right: -6,
+            backgroundColor: '#FFFFFF',
+            borderRadius: 10,
+        },
+        addImageBtn: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 4,
+            paddingHorizontal: 10,
+            paddingVertical: 8,
+            borderRadius: 10,
+            backgroundColor: theme.colors.primary + '15',
+            marginRight: 'auto',
+        },
+        addImageBtnText: {
+            fontSize: 12,
+            fontWeight: '600',
+            color: theme.colors.primary,
         },
         footer: {
             marginTop: theme.spacing.sm,

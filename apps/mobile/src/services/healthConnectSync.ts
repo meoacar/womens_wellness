@@ -10,6 +10,8 @@ import {
   SdkAvailabilityStatus,
 } from 'react-native-health-connect';
 
+type HealthRecordType = 'Steps' | 'SleepSession';
+
 const REQUIRED_PERMISSIONS = [
   { accessType: 'read' as const, recordType: 'Steps' as const },
   { accessType: 'read' as const, recordType: 'SleepSession' as const },
@@ -40,12 +42,26 @@ class HealthConnectSyncService {
     }
   }
 
+  async hasPermission(recordType: HealthRecordType): Promise<boolean> {
+    if (!(await this.ensureInit())) return false;
+    try {
+      const granted = await getGrantedPermissions();
+      return granted.some(
+        (p: any) => p.recordType === recordType && p.accessType === 'read',
+      );
+    } catch {
+      return false;
+    }
+  }
+
   async hasPermissions(): Promise<boolean> {
     if (!(await this.ensureInit())) return false;
     try {
       const granted = await getGrantedPermissions();
       return granted.some(
-        (p: any) => p.recordType === 'Steps' && p.accessType === 'read',
+        (p: any) =>
+          p.accessType === 'read' &&
+          (p.recordType === 'Steps' || p.recordType === 'SleepSession'),
       );
     } catch {
       return false;
@@ -58,7 +74,9 @@ class HealthConnectSyncService {
     try {
       const granted = await requestPermission(REQUIRED_PERMISSIONS);
       return granted.some(
-        (p: any) => p.recordType === 'Steps' && p.accessType === 'read',
+        (p: any) =>
+          p.accessType === 'read' &&
+          (p.recordType === 'Steps' || p.recordType === 'SleepSession'),
       );
     } catch {
       return false;
@@ -75,7 +93,7 @@ class HealthConnectSyncService {
   }
 
   async getTodaySteps(): Promise<number | null> {
-    if (!(await this.hasPermissions())) return null;
+    if (!(await this.hasPermission('Steps'))) return null;
     try {
       const start = new Date();
       start.setHours(0, 0, 0, 0);
@@ -96,7 +114,7 @@ class HealthConnectSyncService {
   }
 
   async getLastNightSleepMinutes(): Promise<number | null> {
-    if (!(await this.hasPermissions())) return null;
+    if (!(await this.hasPermission('SleepSession'))) return null;
     try {
       const end = new Date();
       const start = new Date(end.getTime() - 24 * 60 * 60 * 1000);

@@ -2,6 +2,7 @@ import {
     Controller,
     Get,
     Post,
+    Patch,
     Body,
     Param,
     Put,
@@ -277,5 +278,30 @@ export class AdminController {
         },
     ) {
         return this.retentionService.nudgeSpecificUser(userId, body);
+    }
+
+    @Get('ai-reports')
+    @ApiOperation({ summary: 'List NOVA AI response reports for moderation' })
+    async getAiReports(@Query('status') status?: string) {
+        return this.adminService.getAiMessageReports(status);
+    }
+
+    @Patch('ai-reports/:id')
+    @ApiOperation({ summary: 'Review and update a NOVA AI response report' })
+    async updateAiReport(
+        @Param('id') id: string,
+        @CurrentUser() admin: { id: string },
+        @Body()
+        body: {
+            status: 'PENDING' | 'REVIEWED' | 'RESOLVED' | 'DISMISSED';
+            moderatorNote?: string;
+        },
+    ) {
+        return this.adminService.updateAiMessageReport(
+            id,
+            admin.id,
+            body.status,
+            body.moderatorNote,
+        );
     }
 }

@@ -231,6 +231,24 @@ export const DEFAULT_PAYWALL_CONFIG: PremiumPaywallConfig = {
             premiumValue: '1.000 mesaj/ay (Pro)',
             isActive: true,
         },
+        {
+            id: 'c7',
+            icon: 'images-outline',
+            color: '#EC4899',
+            title: 'Toplulukta Resim Ekleme',
+            freeValue: 'Haftada 2 Resim',
+            premiumValue: 'Haftada 5 Resim',
+            isActive: true,
+        },
+        {
+            id: 'c8',
+            icon: 'sparkles',
+            color: '#F59E0B',
+            title: 'Topluluk PRO Üye Rozeti',
+            freeValue: false,
+            premiumValue: true,
+            isActive: true,
+        },
     ],
     faqs: [
         {

@@ -441,6 +441,14 @@ function ThemedAdminShell({ children }: { children: React.ReactNode }) {
                 },
               },
               {
+                name: 'qna/settings',
+                list: '/qna/settings',
+                meta: {
+                  label: 'Topluluk & Soru Ayarları',
+                  parent: 'qna',
+                },
+              },
+              {
                 name: 'content',
                 meta: {
                   label: 'İçerik Yönetimi',
@@ -510,6 +518,14 @@ function ThemedAdminShell({ children }: { children: React.ReactNode }) {
                 list: '/gamification/insights',
                 meta: {
                   label: 'İçgörüler & İpuçları',
+                  parent: 'gamification',
+                },
+              },
+              {
+                name: 'gamification/daily-cards',
+                list: '/gamification/daily-cards',
+                meta: {
+                  label: 'Günün Mikro-Kartları',
                   parent: 'gamification',
                 },
               },
@@ -618,6 +634,14 @@ function ThemedAdminShell({ children }: { children: React.ReactNode }) {
                 list: '/ai/quotas',
                 meta: {
                   label: 'NOVA Limitleri & Kotalar',
+                  parent: 'ai',
+                },
+              },
+              {
+                name: 'ai-reports',
+                list: '/ai-reports',
+                meta: {
+                  label: 'AI Yanıt Bildirimleri',
                   parent: 'ai',
                 },
               },

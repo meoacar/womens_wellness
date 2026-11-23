@@ -471,4 +471,86 @@ export class ModerationService {
 
         return updatedReport;
     }
+
+    async blockUser(blockerId: string, blockedUserId: string, reason?: string) {
+        if (!blockerId || !blockedUserId) {
+            throw new BadRequestException('Kullanıcı bilgisi eksik');
+        }
+        if (blockerId === blockedUserId) {
+            throw new BadRequestException('Kendinizi engelleyemezsiniz');
+        }
+
+        const targetUser = await this.prisma.user.findUnique({
+            where: { id: blockedUserId },
+            select: { id: true },
+        });
+        if (!targetUser) {
+            throw new NotFoundException('Engellenecek kullanıcı bulunamadı');
+        }
+
+        const block = await this.prisma.userBlock.upsert({
+            where: {
+                blockerId_blockedUserId: { blockerId, blockedUserId },
+            },
+            update: { reason: reason || null },
+            create: {
+                blockerId,
+                blockedUserId,
+                reason: reason || null,
+            },
+        });
+
+        return {
+            success: true,
+            message: 'Kullanıcı engellendi. Bu kullanıcının içerikleri artık size gösterilmeyecek.',
+            block,
+        };
+    }
+
+    async unblockUser(blockerId: string, blockedUserId: string) {
+        await this.prisma.userBlock.deleteMany({
+            where: { blockerId, blockedUserId },
+        });
+
+        return {
+            success: true,
+            message: 'Kullanıcı engeli kaldırıldı.',
+        };
+    }
+
+    async getBlockedUsers(blockerId: string) {
+        const blocks = await this.prisma.userBlock.findMany({
+            where: { blockerId },
+            orderBy: { createdAt: 'desc' },
+            include: {
+                blockedUser: {
+                    select: {
+                        id: true,
+                        username: true,
+                        profile: {
+                            select: {
+                                firstName: true,
+                                lastName: true,
+                                profilePictureUrl: true,
+                            },
+                        },
+                    },
+                },
+            },
+        });
+
+        return blocks.map((b) => {
+            const firstName = b.blockedUser.profile?.firstName?.trim();
+            const lastName = b.blockedUser.profile?.lastName?.trim();
+            const fullName = [firstName, lastName].filter(Boolean).join(' ').trim();
+            return {
+                id: b.id,
+                blockedUserId: b.blockedUserId,
+                displayName: fullName || b.blockedUser.username || 'Kullanıcı',
+                profilePictureUrl: b.blockedUser.profile?.profilePictureUrl || null,
+                reason: b.reason,
+                createdAt: b.createdAt,
+            };
+        });
+    }
 }

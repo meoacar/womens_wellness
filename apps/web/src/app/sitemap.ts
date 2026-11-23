@@ -8,7 +8,9 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     { url: `${SITE_URL}/hesaplayicilar`, changeFrequency: 'weekly', priority: 0.9 },
     { url: `${SITE_URL}/kesfet`, changeFrequency: 'daily', priority: 0.9 },
     { url: `${SITE_URL}/premium`, changeFrequency: 'weekly', priority: 0.8 },
+    { url: `${SITE_URL}/guncellemeler`, changeFrequency: 'weekly', priority: 0.8 },
     { url: `${SITE_URL}/iletisim`, changeFrequency: 'monthly', priority: 0.6 },
+    { url: `${SITE_URL}/hesap-silme`, changeFrequency: 'monthly', priority: 0.6 },
   ];
 
   try {

@@ -9,6 +9,7 @@ import {
     ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import appConfig from '../../app.json';
 import { useRouter } from 'expo-router';
 import { useTheme } from '@/hooks/useTheme';
 import { pagesService } from '@/services/api';
@@ -32,8 +33,8 @@ export default function AboutScreen() {
     const theme = useTheme();
     const styles = createStyles(theme);
 
-    const appVersion = '1.0.0';
-    const buildNumber = '1';
+    const appVersion = appConfig.expo.version || '1.3.0';
+    const buildNumber = String(appConfig.expo.android?.versionCode || 4);
 
     const [aboutContent, setAboutContent] = useState(OFFLINE_ABOUT_FALLBACK);
     const [updatedAt, setUpdatedAt] = useState<string | undefined>(undefined);

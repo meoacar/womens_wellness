@@ -21,7 +21,8 @@ export class ReputationController {
      */
     @Get('me')
     async getMyReputation(@Request() req) {
-        return this.reputationService.getUserReputation(req.user.userId);
+        const userId = req.user.id || req.user.sub;
+        return this.reputationService.getUserReputation(userId);
     }
 
     /**
@@ -33,8 +34,9 @@ export class ReputationController {
         @Request() req,
         @Query() dto: GetReputationHistoryDto,
     ) {
+        const userId = req.user.id || req.user.sub;
         return this.reputationService.getReputationHistory(
-            req.user.userId,
+            userId,
             dto.limit,
         );
     }
@@ -45,7 +47,8 @@ export class ReputationController {
      */
     @Get('me/badges')
     async getMyBadges(@Request() req) {
-        return this.reputationService.getUserBadges(req.user.userId);
+        const userId = req.user.id || req.user.sub;
+        return this.reputationService.getUserBadges(userId);
     }
 
     /**

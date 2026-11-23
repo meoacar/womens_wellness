@@ -4,14 +4,14 @@ import { QuestionCategory, QuestionStatus } from '@prisma/client';
 export class CreateQuestionDto {
     @IsString()
     @IsNotEmpty()
-    @MinLength(10, { message: 'Soru başlığı en az 10 karakter olmalıdır' })
-    @MaxLength(200, { message: 'Soru başlığı en fazla 200 karakter olabilir' })
+    @MinLength(3, { message: 'Soru başlığı en az 3 karakter olmalıdır' })
+    @MaxLength(300, { message: 'Soru başlığı en fazla 300 karakter olabilir' })
     title: string;
 
     @IsString()
     @IsNotEmpty()
-    @MinLength(20, { message: 'Soru içeriği en az 20 karakter olmalıdır' })
-    @MaxLength(5000, { message: 'Soru içeriği en fazla 5000 karakter olabilir' })
+    @MinLength(5, { message: 'Soru içeriği en az 5 karakter olmalıdır' })
+    @MaxLength(10000, { message: 'Soru içeriği en fazla 10000 karakter olabilir' })
     content: string;
 
     @IsEnum(QuestionCategory, { message: 'Geçersiz kategori' })
@@ -19,13 +19,19 @@ export class CreateQuestionDto {
 
     @IsArray()
     @IsString({ each: true })
-    @ArrayMaxSize(5, { message: 'En fazla 5 etiket ekleyebilirsiniz' })
+    @ArrayMaxSize(10, { message: 'En fazla 10 etiket ekleyebilirsiniz' })
     @IsOptional()
     tags?: string[];
 
     @IsBoolean()
     @IsOptional()
     isAnonymous?: boolean;
+
+    @IsArray()
+    @IsString({ each: true })
+    @ArrayMaxSize(5, { message: 'En fazla 5 resim ekleyebilirsiniz' })
+    @IsOptional()
+    imageUrls?: string[];
 }
 
 export class AdminCreateQuestionDto extends CreateQuestionDto {

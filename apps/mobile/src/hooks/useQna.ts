@@ -28,7 +28,8 @@ export const qnaKeys = {
     myQuestions: () => ['qna', 'my-questions'] as const,
     favoriteQuestions: () => ['qna', 'favorite-questions'] as const,
     followingQuestions: () => ['qna', 'following-questions'] as const,
-    answers: (questionId: string, sort?: string) => ['qna', 'answers', questionId, sort] as const,
+    answers: (questionId: string, sort?: string) =>
+        sort ? (['qna', 'answers', questionId, sort] as const) : (['qna', 'answers', questionId] as const),
     myAnswers: () => ['qna', 'my-answers'] as const,
     questionComments: (questionId: string) => ['qna', 'question-comments', questionId] as const,
     answerComments: (answerId: string) => ['qna', 'answer-comments', answerId] as const,
@@ -38,6 +39,7 @@ export const qnaKeys = {
     badges: () => ['qna', 'badges'] as const,
     myBadges: () => ['qna', 'my-badges'] as const,
     quota: () => ['qna', 'quota'] as const,
+    blockedUsers: () => ['qna', 'blocked-users'] as const,
 };
 
 // ============================================================================
@@ -159,6 +161,7 @@ export function useCreateQuestion() {
             queryClient.invalidateQueries({ queryKey: ['qna', 'questions'] });
             queryClient.invalidateQueries({ queryKey: qnaKeys.myQuestions() });
             queryClient.invalidateQueries({ queryKey: qnaKeys.quota() });
+            queryClient.invalidateQueries({ queryKey: ['usage-stats'] });
 
             // Also refetch active queries immediately
             queryClient.refetchQueries({ queryKey: ['qna', 'questions'], type: 'active' });
@@ -787,6 +790,42 @@ export function useMyBadges(
 export function useReportContent() {
     return useMutation({
         mutationFn: (data: ReportContentDto) => qnaService.reportContent(data),
+    });
+}
+
+export function useBlockedUsers() {
+    return useQuery({
+        queryKey: qnaKeys.blockedUsers(),
+        queryFn: () => qnaService.getBlockedUsers(),
+    });
+}
+
+export function useBlockUser() {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: ({ targetUserId, reason }: { targetUserId: string; reason?: string }) =>
+            qnaService.blockUser(targetUserId, reason),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['qna', 'questions'] });
+            queryClient.invalidateQueries({ queryKey: ['qna', 'answers'] });
+            queryClient.invalidateQueries({ queryKey: ['qna', 'question-comments'] });
+            queryClient.invalidateQueries({ queryKey: ['qna', 'answer-comments'] });
+            queryClient.invalidateQueries({ queryKey: qnaKeys.blockedUsers() });
+        },
+    });
+}
+
+export function useUnblockUser() {
+    const queryClient = useQueryClient();
+
+    return useMutation({
+        mutationFn: (targetUserId: string) => qnaService.unblockUser(targetUserId),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['qna', 'questions'] });
+            queryClient.invalidateQueries({ queryKey: ['qna', 'answers'] });
+            queryClient.invalidateQueries({ queryKey: qnaKeys.blockedUsers() });
+        },
     });
 }
 

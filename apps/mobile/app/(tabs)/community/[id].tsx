@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
     View,
     Text,
@@ -11,6 +11,7 @@ import {
     RefreshControl,
     KeyboardAvoidingView,
     Platform,
+    Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
@@ -33,6 +34,7 @@ import {
     useFollowQuestion,
     useUnfollowQuestion,
     useReportContent,
+    useBlockUser,
 } from '@/hooks/useQna';
 import {
     AnswerCard,
@@ -81,6 +83,9 @@ export default function QuestionDetailScreen() {
     const { data: question, isLoading: questionLoading, refetch: refetchQuestion } = useQuestion(questionId, {
         enabled: hasValidId,
     });
+    const scrollViewRef = useRef<ScrollView>(null);
+    const answerSectionYRef = useRef<number>(0);
+
     const { data: answers = [], isLoading: answersLoading, refetch: refetchAnswers } = useAnswers(questionId, 'best', {
         enabled: hasValidId,
     });
@@ -128,6 +133,7 @@ export default function QuestionDetailScreen() {
     const followQuestion = useFollowQuestion();
     const unfollowQuestion = useUnfollowQuestion();
     const reportContentMutation = useReportContent();
+    const blockUserMutation = useBlockUser();
 
     // Derived state - AFTER all hooks
     const isQuestionAuthor = Boolean(
@@ -169,7 +175,7 @@ export default function QuestionDetailScreen() {
         setRefreshing(false);
     }, [refetchQuestion, refetchAnswers, refetchComments, fetchAllAnswerComments]);
 
-    const handleSubmitAnswer = async (content: string) => {
+    const handleSubmitAnswer = async (content: string, imageUrls?: string[]) => {
         // Check if user can answer
         if (!canAnswer) {
             Alert.alert(
@@ -181,9 +187,10 @@ export default function QuestionDetailScreen() {
 
         await createAnswer.mutateAsync({
             questionId: questionId,
-            data: { content },
+            data: { content, imageUrls },
         });
         setShowAnswerInput(false);
+        await Promise.all([refetchAnswers(), refetchQuestion()]);
         Alert.alert('Başarılı', 'Cevabınız gönderildi');
     };
 
@@ -345,7 +352,54 @@ export default function QuestionDetailScreen() {
         }
     };
 
+    const confirmBlockUser = (targetUserId: string, goBackOnSuccess = false) => {
+        Alert.alert(
+            'Kullanıcıyı Engelle',
+            'Bu kullanıcıyı engellediğinizde soruları, cevapları ve yorumları artık size gösterilmeyecektir. Ayarlar > Engellenen Kullanıcılar bölümünden engeli kaldırabilirsiniz.',
+            [
+                { text: 'Vazgeç', style: 'cancel' },
+                {
+                    text: 'Engelle',
+                    style: 'destructive',
+                    onPress: async () => {
+                        try {
+                            await blockUserMutation.mutateAsync({ targetUserId });
+                            await Promise.all([refetchAnswers(), refetchComments()]);
+                            Alert.alert('Engellendi', 'Kullanıcı engellendi.');
+                            if (goBackOnSuccess) {
+                                router.back();
+                            }
+                        } catch (error: any) {
+                            Alert.alert('Hata', error?.message || 'Kullanıcı engellenemedi');
+                        }
+                    },
+                },
+            ],
+        );
+    };
+
     const handleReport = () => {
+        if (!isQuestionAuthor && !question?.isAnonymous && question?.userId) {
+            Alert.alert('Soru İşlemleri', 'Ne yapmak istersiniz?', [
+                {
+                    text: 'İçeriği Bildir',
+                    onPress: () => {
+                        setReportContent({
+                            id: questionId,
+                            type: ContentType.QUESTION,
+                        });
+                        setShowReportModal(true);
+                    },
+                },
+                {
+                    text: 'Kullanıcıyı Engelle',
+                    style: 'destructive',
+                    onPress: () => confirmBlockUser(question.userId, true),
+                },
+                { text: 'Vazgeç', style: 'cancel' },
+            ]);
+            return;
+        }
         setReportContent({
             id: questionId,
             type: ContentType.QUESTION,
@@ -353,7 +407,28 @@ export default function QuestionDetailScreen() {
         setShowReportModal(true);
     };
 
-    const handleReportAnswer = (answerId: string) => {
+    const handleReportAnswer = (answerId: string, authorUserId?: string, isAnonymous?: boolean) => {
+        if (authorUserId && !isAnonymous && authorUserId !== user?.id) {
+            Alert.alert('Cevap İşlemleri', 'Ne yapmak istersiniz?', [
+                {
+                    text: 'Cevabı Bildir',
+                    onPress: () => {
+                        setReportContent({
+                            id: answerId,
+                            type: ContentType.ANSWER,
+                        });
+                        setShowReportModal(true);
+                    },
+                },
+                {
+                    text: 'Kullanıcıyı Engelle',
+                    style: 'destructive',
+                    onPress: () => confirmBlockUser(authorUserId, false),
+                },
+                { text: 'Vazgeç', style: 'cancel' },
+            ]);
+            return;
+        }
         setReportContent({
             id: answerId,
             type: ContentType.ANSWER,
@@ -467,13 +542,15 @@ export default function QuestionDetailScreen() {
             <OfflineBanner />
             <KeyboardAvoidingView
                 style={styles.container}
-                behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-                keyboardVerticalOffset={100}
+                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 24}
             >
                 <ScrollView
+                    ref={scrollViewRef}
                     style={styles.scrollView}
                     contentContainerStyle={styles.scrollContent}
                     keyboardShouldPersistTaps="handled"
+                    automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
                     refreshControl={
                         <RefreshControl
                             refreshing={refreshing}
@@ -493,14 +570,23 @@ export default function QuestionDetailScreen() {
                                 isAnonymous={question.isAnonymous}
                             />
                             <View style={styles.authorInfo}>
-                                <Text style={styles.authorName}>
-                                    {question.isAnonymous ? 'Anonim Kullanıcı' : question.user?.displayName}
-                                </Text>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                    <Text style={styles.authorName}>
+                                        {question.isAnonymous ? 'Anonim Kullanıcı' : question.user?.displayName}
+                                    </Text>
+                                    {!question.isAnonymous && (question.user?.isPremium || question.isPremium) && (
+                                        <View style={styles.inlinePremiumBadge}>
+                                            <Ionicons name="sparkles" size={10} color="#D97706" />
+                                            <Text style={styles.inlinePremiumText}>PRO</Text>
+                                        </View>
+                                    )}
+                                </View>
                                 <Text style={styles.timestamp}>{formatTimestamp(question.createdAt)}</Text>
                             </View>
                             {question.isPremium && (
                                 <View style={styles.premiumBadge}>
-                                    <Ionicons name="sparkles" size={13} color="#D97706" />
+                                    <Ionicons name="sparkles" size={11} color="#D97706" />
+                                    <Text style={styles.premiumBadgeText}>Öne Çıkan</Text>
                                 </View>
                             )}
                         </View>
@@ -510,6 +596,24 @@ export default function QuestionDetailScreen() {
 
                         {/* Content */}
                         <Text style={styles.questionContent}>{question.content}</Text>
+
+                        {/* Attached Images */}
+                        {Array.isArray(question.imageUrls) && question.imageUrls.length > 0 && (
+                            <ScrollView
+                                horizontal
+                                showsHorizontalScrollIndicator={false}
+                                contentContainerStyle={styles.questionImagesRow}
+                            >
+                                {question.imageUrls.map((uri, idx) => (
+                                    <Image
+                                        key={`${uri}-${idx}`}
+                                        source={{ uri }}
+                                        style={styles.questionImage}
+                                        resizeMode="cover"
+                                    />
+                                ))}
+                            </ScrollView>
+                        )}
 
                         {/* Category and Tags */}
                         <View style={styles.tagsContainer}>
@@ -615,7 +719,12 @@ export default function QuestionDetailScreen() {
                     </View>
 
                     {/* Answers Section */}
-                    <View style={styles.answersSection}>
+                    <View
+                        style={styles.answersSection}
+                        onLayout={(e) => {
+                            answerSectionYRef.current = e.nativeEvent.layout.y;
+                        }}
+                    >
                         <View style={styles.answersSectionHeader}>
                             <Text style={styles.sectionTitle}>
                                 Cevaplar ({answerCount})
@@ -653,7 +762,17 @@ export default function QuestionDetailScreen() {
 
                         {/* Answer Input */}
                         {showAnswerInput && (
-                            <View style={styles.answerInputContainer}>
+                            <View
+                                style={styles.answerInputContainer}
+                                onLayout={() => {
+                                    setTimeout(() => {
+                                        scrollViewRef.current?.scrollTo({
+                                            y: Math.max(0, answerSectionYRef.current - 16),
+                                            animated: true,
+                                        });
+                                    }, 120);
+                                }}
+                            >
                                 <AnswerInput
                                     onSubmit={handleSubmitAnswer}
                                     onCancel={() => setShowAnswerInput(false)}
@@ -684,7 +803,7 @@ export default function QuestionDetailScreen() {
                                     }
                                     onVote={(voteType) => handleVote(answer.id, voteType)}
                                     onShare={() => handleShareAnswer(answer.id, answer.content)}
-                                    onReport={() => handleReportAnswer(answer.id)}
+                                    onReport={() => handleReportAnswer(answer.id, answer.userId, (answer as any).isAnonymous)}
                                     onReportComment={(commentId) => handleReportComment(commentId)}
                                     comments={answerCommentsMap[answer.id] || []}
                                     onSubmitComment={(content) => handleSubmitAnswerComment(answer.id, content)}
@@ -905,12 +1024,20 @@ const createStyles = (theme: ReturnType<typeof useTheme>) =>
             marginTop: 2,
         },
         premiumBadge: {
-            width: 28,
-            height: 28,
-            borderRadius: 14,
-            backgroundColor: 'rgba(255, 215, 0, 0.1)',
-            justifyContent: 'center',
+            flexDirection: 'row',
             alignItems: 'center',
+            gap: 4,
+            backgroundColor: 'rgba(245, 158, 11, 0.14)',
+            paddingHorizontal: 9,
+            paddingVertical: 4,
+            borderRadius: 999,
+            borderWidth: 1,
+            borderColor: 'rgba(245, 158, 11, 0.28)',
+        },
+        premiumBadgeText: {
+            fontSize: 11,
+            fontWeight: '700',
+            color: '#D97706',
         },
         questionTitle: {
             fontSize: 22,
@@ -924,6 +1051,33 @@ const createStyles = (theme: ReturnType<typeof useTheme>) =>
             color: theme.colors.text,
             lineHeight: 24,
             marginBottom: theme.spacing.lg,
+        },
+        inlinePremiumBadge: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 2,
+            backgroundColor: 'rgba(245, 158, 11, 0.16)',
+            paddingHorizontal: 6,
+            paddingVertical: 2,
+            borderRadius: 6,
+            borderWidth: 1,
+            borderColor: 'rgba(245, 158, 11, 0.32)',
+        },
+        inlinePremiumText: {
+            fontSize: 9.5,
+            fontWeight: '800',
+            color: '#D97706',
+        },
+        questionImagesRow: {
+            flexDirection: 'row',
+            gap: 10,
+            marginBottom: theme.spacing.md,
+        },
+        questionImage: {
+            width: 160,
+            height: 160,
+            borderRadius: 12,
+            backgroundColor: theme.colors.backgroundSecondary,
         },
         tagsContainer: {
             flexDirection: 'row',

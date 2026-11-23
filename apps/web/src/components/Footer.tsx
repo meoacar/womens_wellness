@@ -74,8 +74,18 @@ export function Footer({ pages = [] }: { pages?: SiteSummary['pages'] }) {
                 </Link>
               </li>
               <li>
+                <Link href="/guncellemeler" className="hover:text-[#FF69B4]">
+                  {t.nav.updates}
+                </Link>
+              </li>
+              <li>
                 <Link href="/iletisim" className="hover:text-[#FF69B4]">
                   {t.nav.contact}
+                </Link>
+              </li>
+              <li>
+                <Link href="/hesap-silme" className="hover:text-[#FF69B4]">
+                  {locale === 'en' ? 'Delete Account & Data' : 'Hesap ve Veri Silme'}
                 </Link>
               </li>
             </ul>

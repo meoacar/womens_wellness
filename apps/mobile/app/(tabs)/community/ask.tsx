@@ -1,769 +1,910 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import {
-    View,
-    Text,
-    StyleSheet,
-    TextInput,
-    ScrollView,
-    TouchableOpacity,
-    Alert,
-    KeyboardAvoidingView,
-    Platform,
-    ActivityIndicator,
+  View,
+  Text,
+  StyleSheet,
+  TextInput,
+  ScrollView,
+  TouchableOpacity,
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  ActivityIndicator,
+  Switch,
+  Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, Stack } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
+import * as ImagePicker from 'expo-image-picker';
+import { useQuery } from '@tanstack/react-query';
 import { useTheme } from '@/hooks/useTheme';
+import { usePremium } from '@/hooks/usePremium';
 import { useCreateQuestion, useQnaQuota } from '@/hooks/useQna';
 import { useQnaStore } from '@/store/qnaStore';
 import { QuestionCategory } from '@/types/qna';
-import { useAuthStore } from '@/store/authStore';
-import { subscriptionService } from '@/services/api';
+import { api, qnaService } from '@/services/api';
 
-const CATEGORY_LABELS: Record<QuestionCategory, { label: string; icon: string }> = {
-    [QuestionCategory.MENSTRUAL_HEALTH]: { label: 'Regl Sağlığı', icon: '🩸' },
-    [QuestionCategory.PREGNANCY]: { label: 'Hamilelik', icon: '🤰' },
-    [QuestionCategory.FERTILITY]: { label: 'Doğurganlık', icon: '🌸' },
-    [QuestionCategory.NUTRITION]: { label: 'Beslenme', icon: '🥗' },
-    [QuestionCategory.EXERCISE]: { label: 'Egzersiz', icon: '💪' },
-    [QuestionCategory.MENTAL_HEALTH]: { label: 'Ruh Sağlığı', icon: '🧠' },
-    [QuestionCategory.SLEEP]: { label: 'Uyku', icon: '😴' },
-    [QuestionCategory.CONTRACEPTION]: { label: 'Doğum Kontrolü', icon: '💊' },
-    [QuestionCategory.PMS]: { label: 'PMS', icon: '😣' },
-    [QuestionCategory.MENOPAUSE]: { label: 'Menopoz', icon: '🌡️' },
-    [QuestionCategory.SEXUAL_HEALTH]: { label: 'Cinsel Sağlık', icon: '❤️' },
-    [QuestionCategory.GENERAL]: { label: 'Genel', icon: '💬' },
+interface CommunitySettings {
+  allowNewQuestions: boolean;
+  freeMonthlyQuestionLimit: number;
+  premiumMonthlyQuestionLimit: number;
+  dailyQuestionLimit: number;
+  titleMinLength: number;
+  titleMaxLength: number;
+  contentMinLength: number;
+  contentMaxLength: number;
+  maxTags: number;
+  allowAnonymous: boolean;
+  enabledCategories: QuestionCategory[];
+  pointsPerQuestion: number;
+  xpPerReputationPoint: number;
+  askPageBannerTitle: string;
+  askPageBannerSubtitle: string;
+}
+
+const DEFAULT_SETTINGS: CommunitySettings = {
+  allowNewQuestions: true,
+  freeMonthlyQuestionLimit: 5,
+  premiumMonthlyQuestionLimit: 20,
+  dailyQuestionLimit: 3,
+  titleMinLength: 10,
+  titleMaxLength: 200,
+  contentMinLength: 20,
+  contentMaxLength: 3000,
+  maxTags: 5,
+  allowAnonymous: true,
+  enabledCategories: Object.values(QuestionCategory),
+  pointsPerQuestion: 5,
+  xpPerReputationPoint: 1,
+  askPageBannerTitle: 'Topluluğa Sorunu Paylaş',
+  askPageBannerSubtitle:
+    'Deneyimlerini paylaş, uzmanlardan ve topluluktan destek al. İstersen tamamen anonim sorabilirsin.',
+};
+
+const CATEGORY_META: Record<
+  QuestionCategory,
+  { label: string; icon: keyof typeof Ionicons.glyphMap; color: string }
+> = {
+  [QuestionCategory.MENSTRUAL_HEALTH]: { label: 'Regl Sağlığı', icon: 'water-outline', color: '#E11D48' },
+  [QuestionCategory.PREGNANCY]: { label: 'Hamilelik', icon: 'heart-outline', color: '#EC4899' },
+  [QuestionCategory.FERTILITY]: { label: 'Doğurganlık', icon: 'flower-outline', color: '#DB2777' },
+  [QuestionCategory.NUTRITION]: { label: 'Beslenme', icon: 'nutrition-outline', color: '#10B981' },
+  [QuestionCategory.EXERCISE]: { label: 'Egzersiz', icon: 'barbell-outline', color: '#3B82F6' },
+  [QuestionCategory.MENTAL_HEALTH]: { label: 'Ruh Sağlığı', icon: 'sparkles-outline', color: '#8B5CF6' },
+  [QuestionCategory.SLEEP]: { label: 'Uyku', icon: 'moon-outline', color: '#6366F1' },
+  [QuestionCategory.CONTRACEPTION]: { label: 'Doğum Kontrolü', icon: 'shield-checkmark-outline', color: '#0EA5E9' },
+  [QuestionCategory.PMS]: { label: 'PMS', icon: 'pulse-outline', color: '#F59E0B' },
+  [QuestionCategory.MENOPAUSE]: { label: 'Menopoz', icon: 'sunny-outline', color: '#F97316' },
+  [QuestionCategory.SEXUAL_HEALTH]: { label: 'Cinsel Sağlık', icon: 'heart-half-outline', color: '#BE185D' },
+  [QuestionCategory.GENERAL]: { label: 'Genel', icon: 'chatbubble-ellipses-outline', color: '#64748B' },
 };
 
 export default function AskQuestionScreen() {
-    const theme = useTheme();
-    const styles = createStyles(theme);
-    const router = useRouter();
-    const { user } = useAuthStore();
+  const theme = useTheme();
+  const styles = createStyles(theme);
+  const router = useRouter();
 
-    // Store
-    const { draftQuestion, setDraftQuestion, clearDraftQuestion } = useQnaStore();
+  const { draftQuestion, setDraftQuestion, clearDraftQuestion } = useQnaStore();
+  const createQuestionMutation = useCreateQuestion();
+  const { data: quota, isLoading: quotaLoading } = useQnaQuota();
 
-    // API hooks
-    const createQuestionMutation = useCreateQuestion();
-    const { data: quota, isLoading: quotaLoading } = useQnaQuota();
+  const { data: remoteSettings } = useQuery<CommunitySettings>({
+    queryKey: ['qna', 'settings'],
+    queryFn: () => api.get<CommunitySettings>('/qna/settings'),
+    staleTime: 60 * 1000,
+  });
 
-    // Check premium status
-    const [isPremium, setIsPremium] = useState(false);
-    const [checkingPremium, setCheckingPremium] = useState(true);
+  const settings = useMemo(
+    () => ({ ...DEFAULT_SETTINGS, ...(remoteSettings || {}) }),
+    [remoteSettings],
+  );
 
-    useEffect(() => {
-        const checkPremiumStatus = async () => {
-            try {
-                const subscription = await subscriptionService.getStatus();
-                setIsPremium(subscription.status === 'ACTIVE');
-            } catch (error) {
-                setIsPremium(false);
-            } finally {
-                setCheckingPremium(false);
+  const [title, setTitle] = useState(draftQuestion?.title || '');
+  const [content, setContent] = useState(draftQuestion?.content || '');
+  const [category, setCategory] = useState<QuestionCategory | undefined>(
+    draftQuestion?.category,
+  );
+  const [tags, setTags] = useState<string[]>(draftQuestion?.tags || []);
+  const [tagInput, setTagInput] = useState('');
+  const { isPremium } = usePremium();
+  const maxImages = quota?.imageRemaining ?? (isPremium ? 5 : 2);
+  const weeklyImageLimit = quota?.imageLimit ?? (isPremium ? 5 : 2);
+  const [isAnonymous, setIsAnonymous] = useState(
+    draftQuestion?.isAnonymous || false,
+  );
+  const [selectedImages, setSelectedImages] = useState<string[]>([]);
+  const [isUploadingImages, setIsUploadingImages] = useState(false);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
+  const handlePickImage = async () => {
+    if (selectedImages.length >= maxImages) {
+      Alert.alert(
+        'Haftalık Resim Limiti',
+        isPremium
+          ? `Bu hafta kalan resim ekleme hakkınız: ${maxImages}/${weeklyImageLimit}. Hafta sonunda sıfırlanır.`
+          : `Ücretsiz üyeler haftada en fazla ${weeklyImageLimit} resim ekleyebilir (kalan: ${maxImages}). Hafta sonunda sıfırlanır veya Premium ile haftada 5 resim ekleyebilirsiniz.`,
+      );
+      return;
+    }
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert('İzin Gerekli', 'Resim seçebilmek için galeri izni vermelisiniz.');
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsEditing: true,
+      quality: 0.8,
+    });
+    if (!result.canceled && result.assets?.[0]?.uri) {
+      setSelectedImages((prev) => [...prev, result.assets[0].uri].slice(0, maxImages));
+    }
+  };
+
+  const availableCategories = useMemo(
+    () =>
+      (Object.values(QuestionCategory) as QuestionCategory[]).filter((c) =>
+        settings.enabledCategories.includes(c),
+      ),
+    [settings.enabledCategories],
+  );
+
+  const quotaLimit = quota?.limit || settings.freeMonthlyQuestionLimit;
+  const quotaRemaining = quota?.remaining ?? quotaLimit;
+  const quotaExceeded = quotaRemaining <= 0;
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (title || content || category || tags.length > 0) {
+        setDraftQuestion({ title, content, category, tags, isAnonymous });
+      }
+    }, 450);
+    return () => clearTimeout(timer);
+  }, [title, content, category, tags, isAnonymous, setDraftQuestion]);
+
+  const handleAddTag = () => {
+    const trimmed = tagInput.trim().toLowerCase().replace(/^#/, '');
+    if (!trimmed) return;
+    if (tags.length >= settings.maxTags) {
+      Alert.alert('Etiket Limiti', `En fazla ${settings.maxTags} etiket ekleyebilirsiniz.`);
+      return;
+    }
+    if (tags.includes(trimmed)) {
+      setTagInput('');
+      return;
+    }
+    setTags([...tags, trimmed]);
+    setTagInput('');
+  };
+
+  const handleRemoveTag = (tagToRemove: string) => {
+    setTags(tags.filter((t) => t !== tagToRemove));
+  };
+
+  const validateForm = () => {
+    const nextErrors: Record<string, string> = {};
+    const tLen = title.trim().length;
+    const cLen = content.trim().length;
+
+    if (tLen < settings.titleMinLength) {
+      nextErrors.title = `Başlık en az ${settings.titleMinLength} karakter olmalıdır`;
+    } else if (tLen > settings.titleMaxLength) {
+      nextErrors.title = `Başlık en fazla ${settings.titleMaxLength} karakter olabilir`;
+    }
+
+    if (!category) {
+      nextErrors.category = 'Lütfen bir kategori seçin';
+    }
+
+    if (cLen < settings.contentMinLength) {
+      nextErrors.content = `Açıklama en az ${settings.contentMinLength} karakter olmalıdır`;
+    } else if (cLen > settings.contentMaxLength) {
+      nextErrors.content = `Açıklama en fazla ${settings.contentMaxLength} karakter olabilir`;
+    }
+
+    setErrors(nextErrors);
+    return Object.keys(nextErrors).length === 0;
+  };
+
+  const handleSubmit = async () => {
+    if (!settings.allowNewQuestions) {
+      Alert.alert('Bilgi', 'Yeni soru paylaşımı geçici olarak durdurulmuştur.');
+      return;
+    }
+    if (quotaExceeded) {
+      Alert.alert('Soru Limitiniz Doldu', 'Bu ayki soru sorma hakkınızı kullandınız.');
+      return;
+    }
+    if (!validateForm() || !category) return;
+
+    try {
+      let uploadedUrls: string[] | undefined;
+      if (selectedImages.length > 0) {
+        setIsUploadingImages(true);
+        const results = await Promise.all(
+          selectedImages.map((uri) => qnaService.uploadImage(uri)),
+        );
+        uploadedUrls = results.map((r) => r.imageUrl);
+        setIsUploadingImages(false);
+      }
+
+      await createQuestionMutation.mutateAsync({
+        title: title.trim(),
+        content: content.trim(),
+        category,
+        tags,
+        isAnonymous: settings.allowAnonymous ? isAnonymous : false,
+        imageUrls: uploadedUrls,
+      });
+
+      clearDraftQuestion();
+      Alert.alert('Yayınlandı', 'Sorunuz toplulukla paylaşıldı.');
+      router.back();
+    } catch (error: any) {
+      setIsUploadingImages(false);
+      Alert.alert(
+        'Gönderilemedi',
+        error?.response?.data?.message || error?.message || 'Soru paylaşılırken bir hata oluştu.',
+      );
+    }
+  };
+
+  const xpReward = Math.round(
+    settings.pointsPerQuestion * settings.xpPerReputationPoint,
+  );
+
+  return (
+    <SafeAreaView style={styles.safeArea} edges={['top']}>
+      <Stack.Screen options={{ headerShown: false }} />
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        {/* Top Bar */}
+        <View style={styles.topBar}>
+          <TouchableOpacity
+            style={styles.iconBtn}
+            onPress={() => router.back()}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <Ionicons name="close" size={22} color={theme.colors.text} />
+          </TouchableOpacity>
+          <Text style={styles.topTitle}>Yeni Soru</Text>
+          <TouchableOpacity
+            style={[
+              styles.publishPill,
+              (createQuestionMutation.isPending ||
+                !settings.allowNewQuestions ||
+                quotaExceeded) &&
+                styles.publishPillDisabled,
+            ]}
+            disabled={
+              createQuestionMutation.isPending ||
+              !settings.allowNewQuestions ||
+              quotaExceeded
             }
-        };
-        checkPremiumStatus();
-    }, []);
+            onPress={handleSubmit}
+          >
+            {createQuestionMutation.isPending ? (
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            ) : (
+              <Text style={styles.publishPillText}>Paylaş</Text>
+            )}
+          </TouchableOpacity>
+        </View>
 
-    // Form state
-    const [title, setTitle] = useState(draftQuestion?.title || '');
-    const [content, setContent] = useState(draftQuestion?.content || '');
-    const [category, setCategory] = useState<QuestionCategory | undefined>(draftQuestion?.category);
-    const [tags, setTags] = useState<string[]>(draftQuestion?.tags || []);
-    const [tagInput, setTagInput] = useState('');
-    const [isAnonymous, setIsAnonymous] = useState(draftQuestion?.isAnonymous || false);
-    const [showCategoryPicker, setShowCategoryPicker] = useState(false);
+        <ScrollView
+          style={styles.scroll}
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          {/* Hero Banner */}
+          <LinearGradient
+            colors={theme.isDark ? ['#5B21B6', '#9D174D'] : ['#8B5CF6', '#EC4899']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.heroCard}
+          >
+            <View style={styles.heroTopRow}>
+              <View style={styles.heroBadge}>
+                <Ionicons name="chatbubbles" size={14} color="#FFFFFF" />
+                <Text style={styles.heroBadgeText}>Topluluk</Text>
+              </View>
+              {!quotaLoading && (
+                <View style={styles.quotaPill}>
+                  <Text style={styles.quotaPillText}>
+                    Kalan Hak: {quotaRemaining}/{quotaLimit}
+                  </Text>
+                </View>
+              )}
+            </View>
+            <Text style={styles.heroTitle}>{settings.askPageBannerTitle}</Text>
+            <Text style={styles.heroSubtitle}>{settings.askPageBannerSubtitle}</Text>
+            {settings.pointsPerQuestion > 0 && (
+              <View style={styles.rewardRow}>
+                <Ionicons name="trophy-outline" size={13} color="#FDE68A" />
+                <Text style={styles.rewardText}>
+                  +{settings.pointsPerQuestion} Topluluk Puanı
+                  {xpReward > 0 ? ` · +${xpReward} XP` : ''}
+                </Text>
+              </View>
+            )}
+          </LinearGradient>
 
-    // Validation errors
-    const [errors, setErrors] = useState<Record<string, string>>({});
+          {!settings.allowNewQuestions && (
+            <View style={styles.warningCard}>
+              <Ionicons name="pause-circle-outline" size={20} color="#D97706" />
+              <Text style={styles.warningText}>
+                Yeni soru oluşturma şu an yönetici tarafından geçici olarak duraklatılmıştır.
+              </Text>
+            </View>
+          )}
 
-    // Check if user has reached quota
-    const quotaLimit = quota?.limit || 0;
-    const quotaUsed = quota?.questionsAsked || 0;
-    const quotaRemaining = quota?.remaining || 0;
-    const quotaExceeded = quotaRemaining <= 0;
+          {/* Category Picker */}
+          <View style={styles.card}>
+            <View style={styles.labelRow}>
+              <Text style={styles.label}>Konu Kategorisi</Text>
+              <Text style={styles.requiredMark}>Zorunlu</Text>
+            </View>
+            <View style={styles.categoryWrap}>
+              {availableCategories.map((cat) => {
+                const meta = CATEGORY_META[cat];
+                const selected = category === cat;
+                return (
+                  <TouchableOpacity
+                    key={cat}
+                    style={[
+                      styles.categoryChip,
+                      selected && {
+                        backgroundColor: meta.color,
+                        borderColor: meta.color,
+                      },
+                    ]}
+                    onPress={() => {
+                      setCategory(cat);
+                      if (errors.category) {
+                        setErrors({ ...errors, category: '' });
+                      }
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons
+                      name={meta.icon}
+                      size={14}
+                      color={selected ? '#FFFFFF' : meta.color}
+                    />
+                    <Text
+                      style={[
+                        styles.categoryChipText,
+                        selected && { color: '#FFFFFF' },
+                      ]}
+                    >
+                      {meta.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+            {errors.category ? (
+              <Text style={styles.errorText}>{errors.category}</Text>
+            ) : null}
+          </View>
 
-    // Debug log
-    useEffect(() => {
-        if (quota) {
-            console.log('Quota data:', JSON.stringify(quota, null, 2));
-            console.log('isPremium:', isPremium);
-            console.log('quotaLimit:', quotaLimit);
-            console.log('quotaRemaining:', quotaRemaining);
-        }
-    }, [quota, isPremium, quotaLimit, quotaRemaining]);
-
-    // Auto-save draft
-    useEffect(() => {
-        const timer = setTimeout(() => {
-            if (title || content) {
-                setDraftQuestion({
-                    title,
-                    content,
-                    category,
-                    tags,
-                    isAnonymous,
-                });
-            }
-        }, 2000);
-
-        return () => clearTimeout(timer);
-    }, [title, content, category, tags, isAnonymous]);
-
-    const validateForm = (): boolean => {
-        const newErrors: Record<string, string> = {};
-
-        if (!title.trim()) {
-            newErrors.title = 'Başlık gerekli';
-        } else if (title.trim().length < 10) {
-            newErrors.title = 'Başlık en az 10 karakter olmalı';
-        } else if (title.trim().length > 200) {
-            newErrors.title = 'Başlık en fazla 200 karakter olabilir';
-        }
-
-        if (!content.trim()) {
-            newErrors.content = 'Açıklama gerekli';
-        } else if (content.trim().length < 20) {
-            newErrors.content = 'Açıklama en az 20 karakter olmalı';
-        } else if (content.trim().length > 5000) {
-            newErrors.content = 'Açıklama en fazla 5000 karakter olabilir';
-        }
-
-        if (!category) {
-            newErrors.category = 'Kategori seçmelisiniz';
-        }
-
-        if (tags.length > 5) {
-            newErrors.tags = 'En fazla 5 etiket ekleyebilirsiniz';
-        }
-
-        setErrors(newErrors);
-        return Object.keys(newErrors).length === 0;
-    };
-
-    const handleAddTag = () => {
-        const trimmedTag = tagInput.trim().toLowerCase();
-        if (trimmedTag && !tags.includes(trimmedTag) && tags.length < 5) {
-            setTags([...tags, trimmedTag]);
-            setTagInput('');
-        }
-    };
-
-    const handleRemoveTag = (tagToRemove: string) => {
-        setTags(tags.filter((tag) => tag !== tagToRemove));
-    };
-
-    const handlePublish = async () => {
-        if (!validateForm()) {
-            return;
-        }
-
-        if (quotaExceeded && quotaLimit > 0) {
-            Alert.alert(
-                'Aylık soru limitinize ulaştınız',
-                isPremium
-                    ? `Premium üyeler ayda ${quotaLimit} soru sorabilir. Limitiniz gelecek ay yenilenecek.`
-                    : `Ücretsiz üyeler ayda ${quotaLimit} soru sorabilir. Premium'a geçerek daha fazla soru sorabilirsiniz.`,
-                [
-                    {
-                        text: 'Tamam',
-                        style: 'cancel',
-                    },
-                    ...(!isPremium ? [{
-                        text: "Premium'a Geç",
-                        onPress: () => router.push('/premium'),
-                    }] : []),
-                ]
-            );
-            return;
-        }
-
-        try {
-            await createQuestionMutation.mutateAsync({
-                title: title.trim(),
-                content: content.trim(),
-                category: category!,
-                tags: tags.length > 0 ? tags : undefined,
-                isAnonymous,
-            });
-
-            clearDraftQuestion();
-
-            // Navigate back first
-            router.back();
-
-            // Show success message after navigation
-            setTimeout(() => {
-                Alert.alert('Başarılı', 'Sorunuz yayınlandı ve toplulukta görünecek');
-            }, 300);
-        } catch (error: any) {
-            Alert.alert(
-                'Hata',
-                error.message || 'Soru oluşturulamadı. Lütfen tekrar deneyin.'
-            );
-        }
-    };
-
-    const categories = Object.values(QuestionCategory);
-
-    return (
-        <SafeAreaView style={styles.safeArea} edges={['top']}>
-            <Stack.Screen
-                options={{
-                    title: 'Soru Sor',
-                    headerLeft: () => (
-                        <TouchableOpacity onPress={() => router.back()}>
-                            <Text style={{ fontSize: 24 }}>✖️</Text>
-                        </TouchableOpacity>
-                    ),
-                    headerRight: () => (
-                        <TouchableOpacity
-                            onPress={handlePublish}
-                            disabled={createQuestionMutation.isPending}
-                        >
-                            {createQuestionMutation.isPending ? (
-                                <ActivityIndicator size="small" color={theme.colors.primary} />
-                            ) : (
-                                <Text style={styles.publishButton}>Yayınla</Text>
-                            )}
-                        </TouchableOpacity>
-                    ),
-                }}
+          {/* Title Input */}
+          <View style={styles.card}>
+            <View style={styles.labelRow}>
+              <Text style={styles.label}>Konu Başlığı</Text>
+              <Text style={styles.counterText}>
+                {title.trim().length}/{settings.titleMaxLength}
+              </Text>
+            </View>
+            <TextInput
+              style={[styles.input, errors.title && styles.inputError]}
+              placeholder={`Kısa ve net bir başlık yazın (min ${settings.titleMinLength} karakter)`}
+              placeholderTextColor={theme.colors.textLight}
+              value={title}
+              onChangeText={(text) => {
+                setTitle(text);
+                if (errors.title) setErrors({ ...errors, title: '' });
+              }}
+              maxLength={settings.titleMaxLength}
             />
+            {errors.title ? (
+              <Text style={styles.errorText}>{errors.title}</Text>
+            ) : null}
+          </View>
 
-            <KeyboardAvoidingView
-                style={styles.container}
-                behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-            >
-                <ScrollView
-                    style={styles.scrollView}
-                    contentContainerStyle={styles.scrollContent}
-                    keyboardShouldPersistTaps="handled"
-                    showsVerticalScrollIndicator={false}
-                >
-                    {/* Quota Display */}
-                    {!quotaLoading && !checkingPremium && quota && quotaLimit > 0 && (
-                        <View style={[styles.quotaCard, quotaExceeded && styles.quotaCardExceeded]}>
-                            <View style={styles.quotaRow}>
-                                <Text style={{ fontSize: 20 }}>
-                                    {quotaExceeded ? '⚠️' : '✅'}
-                                </Text>
-                                <Text style={styles.quotaText}>
-                                    {quotaRemaining}/{quotaLimit} soru hakkı kaldı
-                                </Text>
-                            </View>
-                            {quotaExceeded && !isPremium && (
-                                <TouchableOpacity
-                                    style={styles.upgradeButton}
-                                    onPress={() => router.push('/premium')}
-                                >
-                                    <Text style={styles.upgradeButtonText}>Premium'a Geç</Text>
-                                </TouchableOpacity>
-                            )}
-                        </View>
-                    )}
+          {/* Content Input */}
+          <View style={styles.card}>
+            <View style={styles.labelRow}>
+              <Text style={styles.label}>Sorunuzun Detayı</Text>
+              <Text style={styles.counterText}>
+                {content.trim().length}/{settings.contentMaxLength}
+              </Text>
+            </View>
+            <TextInput
+              style={[styles.textArea, errors.content && styles.inputError]}
+              placeholder={`Durumunuzu detaylandırın (min ${settings.contentMinLength} karakter)...`}
+              placeholderTextColor={theme.colors.textLight}
+              value={content}
+              onChangeText={(text) => {
+                setContent(text);
+                if (errors.content) setErrors({ ...errors, content: '' });
+              }}
+              multiline
+              textAlignVertical="top"
+              maxLength={settings.contentMaxLength}
+            />
+            {errors.content ? (
+              <Text style={styles.errorText}>{errors.content}</Text>
+            ) : null}
+          </View>
 
-                    {/* Title Input */}
-                    <View style={styles.section}>
-                        <Text style={styles.label}>
-                            Başlık <Text style={styles.required}>*</Text>
-                        </Text>
-                        <TextInput
-                            style={[styles.input, errors.title && styles.inputError]}
-                            placeholder="Sorunuzu kısaca özetleyin"
-                            placeholderTextColor={theme.colors.textSecondary}
-                            value={title}
-                            onChangeText={(text) => {
-                                setTitle(text);
-                                if (errors.title) setErrors({ ...errors, title: '' });
-                            }}
-                            maxLength={200}
-                        />
-                        <View style={styles.inputFooter}>
-                            {errors.title ? (
-                                <Text style={styles.errorText}>{errors.title}</Text>
-                            ) : (
-                                <Text style={styles.hint}>En az 10 karakter</Text>
-                            )}
-                            <Text style={styles.charCount}>{title.length}/200</Text>
-                        </View>
-                    </View>
-
-                    {/* Content Input */}
-                    <View style={styles.section}>
-                        <Text style={styles.label}>
-                            Açıklama <Text style={styles.required}>*</Text>
-                        </Text>
-                        <TextInput
-                            style={[styles.input, styles.textArea, errors.content && styles.inputError]}
-                            placeholder="Sorunuzu detaylı olarak açıklayın..."
-                            placeholderTextColor={theme.colors.textSecondary}
-                            value={content}
-                            onChangeText={(text) => {
-                                setContent(text);
-                                if (errors.content) setErrors({ ...errors, content: '' });
-                            }}
-                            multiline
-                            numberOfLines={8}
-                            textAlignVertical="top"
-                            maxLength={5000}
-                        />
-                        <View style={styles.inputFooter}>
-                            {errors.content ? (
-                                <Text style={styles.errorText}>{errors.content}</Text>
-                            ) : (
-                                <Text style={styles.hint}>En az 20 karakter</Text>
-                            )}
-                            <Text style={styles.charCount}>{content.length}/5000</Text>
-                        </View>
-                    </View>
-
-                    {/* Category Picker */}
-                    <View style={styles.section}>
-                        <Text style={styles.label}>
-                            Kategori <Text style={styles.required}>*</Text>
-                        </Text>
-                        <TouchableOpacity
-                            style={[styles.picker, errors.category && styles.inputError]}
-                            onPress={() => setShowCategoryPicker(!showCategoryPicker)}
-                        >
-                            <View style={styles.pickerContent}>
-                                {category && (
-                                    <Text style={styles.categoryIcon}>
-                                        {CATEGORY_LABELS[category].icon}
-                                    </Text>
-                                )}
-                                <Text
-                                    style={[
-                                        styles.pickerText,
-                                        !category && styles.pickerPlaceholder,
-                                    ]}
-                                >
-                                    {category ? CATEGORY_LABELS[category].label : 'Kategori Seçin'}
-                                </Text>
-                            </View>
-                            <Text style={{ fontSize: 20 }}>
-                                {showCategoryPicker ? '⬆️' : '⬇️'}
-                            </Text>
-                        </TouchableOpacity>
-                        {errors.category && <Text style={styles.errorText}>{errors.category}</Text>}
-
-                        {showCategoryPicker && (
-                            <ScrollView style={styles.categoryList} nestedScrollEnabled>
-                                {categories.map((cat, index) => (
-                                    <TouchableOpacity
-                                        key={cat}
-                                        style={[
-                                            styles.categoryItem,
-                                            category === cat && styles.categoryItemSelected,
-                                            index === categories.length - 1 && styles.categoryItemLast,
-                                        ]}
-                                        onPress={() => {
-                                            setCategory(cat);
-                                            setShowCategoryPicker(false);
-                                            if (errors.category) setErrors({ ...errors, category: '' });
-                                        }}
-                                    >
-                                        <View style={styles.categoryItemContent}>
-                                            <Text style={styles.categoryItemIcon}>
-                                                {CATEGORY_LABELS[cat].icon}
-                                            </Text>
-                                            <Text
-                                                style={[
-                                                    styles.categoryItemText,
-                                                    category === cat && styles.categoryItemTextSelected,
-                                                ]}
-                                            >
-                                                {CATEGORY_LABELS[cat].label}
-                                            </Text>
-                                        </View>
-                                        {category === cat && (
-                                            <Text style={{ fontSize: 20 }}>✅</Text>
-                                        )}
-                                    </TouchableOpacity>
-                                ))}
-                            </ScrollView>
-                        )}
-                    </View>
-
-                    {/* Tags Input */}
-                    <View style={styles.section}>
-                        <Text style={styles.label}>Etiketler (Opsiyonel)</Text>
-                        {tags.length > 0 && (
-                            <View style={styles.tagsContainer}>
-                                {tags.map((tag) => (
-                                    <View key={tag} style={styles.tag}>
-                                        <Text style={styles.tagText}>#{tag}</Text>
-                                        <TouchableOpacity onPress={() => handleRemoveTag(tag)}>
-                                            <Text style={{ fontSize: 16 }}>❌</Text>
-                                        </TouchableOpacity>
-                                    </View>
-                                ))}
-                            </View>
-                        )}
-                        {tags.length < 5 && (
-                            <View style={styles.tagInputContainer}>
-                                <TextInput
-                                    style={styles.tagInput}
-                                    placeholder="Etiket ekle (Enter'a bas)"
-                                    placeholderTextColor={theme.colors.textSecondary}
-                                    value={tagInput}
-                                    onChangeText={setTagInput}
-                                    onSubmitEditing={handleAddTag}
-                                    returnKeyType="done"
-                                />
-                                <TouchableOpacity
-                                    style={styles.addTagButton}
-                                    onPress={handleAddTag}
-                                    disabled={!tagInput.trim()}
-                                >
-                                    <Text style={{ fontSize: 24, opacity: tagInput.trim() ? 1 : 0.4 }}>➕</Text>
-                                </TouchableOpacity>
-                            </View>
-                        )}
-                        <Text style={styles.hint}>En fazla 5 etiket ekleyebilirsiniz</Text>
-                    </View>
-
-                    {/* Anonymous Toggle */}
+          {/* Tags */}
+          {settings.maxTags > 0 && (
+            <View style={styles.card}>
+              <View style={styles.labelRow}>
+                <Text style={styles.label}>Etiketler (İsteğe bağlı)</Text>
+                <Text style={styles.counterText}>
+                  {tags.length}/{settings.maxTags}
+                </Text>
+              </View>
+              <View style={styles.tagInputRow}>
+                <TextInput
+                  style={[styles.input, { flex: 1 }]}
+                  placeholder="Örn: regl, uyku, beslenme"
+                  placeholderTextColor={theme.colors.textLight}
+                  value={tagInput}
+                  onChangeText={setTagInput}
+                  onSubmitEditing={handleAddTag}
+                  returnKeyType="done"
+                />
+                <TouchableOpacity style={styles.addTagBtn} onPress={handleAddTag}>
+                  <Ionicons name="add" size={20} color="#FFFFFF" />
+                </TouchableOpacity>
+              </View>
+              {tags.length > 0 && (
+                <View style={styles.tagsList}>
+                  {tags.map((t) => (
                     <TouchableOpacity
-                        style={styles.anonymousCard}
-                        onPress={() => setIsAnonymous(!isAnonymous)}
-                        activeOpacity={0.7}
+                      key={t}
+                      style={styles.tagPill}
+                      onPress={() => handleRemoveTag(t)}
                     >
-                        <View style={styles.anonymousLeft}>
-                            <View style={[styles.anonymousIcon, isAnonymous && styles.anonymousIconActive]}>
-                                <Text style={{ fontSize: 20 }}>
-                                    {isAnonymous ? '🙈' : '👁️'}
-                                </Text>
-                            </View>
-                            <View style={styles.anonymousText}>
-                                <Text style={styles.anonymousTitle}>Anonim Olarak Sor</Text>
-                                <Text style={styles.anonymousDesc}>Kimliğiniz gizli kalacak</Text>
-                            </View>
-                        </View>
-                        <View style={[styles.switch, isAnonymous && styles.switchActive]}>
-                            <View style={[styles.switchThumb, isAnonymous && styles.switchThumbActive]} />
-                        </View>
+                      <Text style={styles.tagPillText}>#{t}</Text>
+                      <Ionicons name="close-circle" size={14} color={theme.colors.primary} />
                     </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+            </View>
+          )}
 
-                    {/* Publish Button */}
+          {/* Image Picker Card */}
+          <View style={styles.imageSectionCard}>
+            <View style={styles.imageSectionHeader}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+                <Ionicons name="images-outline" size={18} color={theme.colors.primary} />
+                <View>
+                  <Text style={styles.anonTitle}>Resim Ekle ({selectedImages.length}/{maxImages})</Text>
+                  <Text style={styles.anonSubtitle}>
+                    {isPremium
+                      ? `Haftalık kalan hakkınız: ${maxImages}/${weeklyImageLimit} (her hafta yenilenir)`
+                      : `Haftalık ${maxImages}/${weeklyImageLimit} hak · Premium ile haftada 5 resim`}
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                style={styles.pickImageBtn}
+                onPress={handlePickImage}
+                disabled={selectedImages.length >= maxImages || isUploadingImages}
+              >
+                <Ionicons name="add" size={16} color={theme.colors.primary} />
+                <Text style={styles.pickImageBtnText}>Fotoğraf Seç</Text>
+              </TouchableOpacity>
+            </View>
+            {selectedImages.length > 0 && (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={{ flexDirection: 'row', gap: 10, marginTop: 12 }}
+              >
+                {selectedImages.map((uri, idx) => (
+                  <View key={`${uri}-${idx}`} style={{ position: 'relative' }}>
+                    <Image
+                      source={{ uri }}
+                      style={{ width: 76, height: 76, borderRadius: 12 }}
+                    />
                     <TouchableOpacity
-                        style={[
-                            styles.publishButtonLarge,
-                            createQuestionMutation.isPending && styles.publishButtonDisabled,
-                        ]}
-                        onPress={handlePublish}
-                        disabled={createQuestionMutation.isPending}
-                        activeOpacity={0.8}
+                      style={{
+                        position: 'absolute',
+                        top: -6,
+                        right: -6,
+                        backgroundColor: '#FFFFFF',
+                        borderRadius: 10,
+                      }}
+                      onPress={() =>
+                        setSelectedImages((prev) => prev.filter((_, i) => i !== idx))
+                      }
                     >
-                        {createQuestionMutation.isPending ? (
-                            <ActivityIndicator size="small" color="#fff" />
-                        ) : (
-                            <>
-                                <Text style={{ fontSize: 20, color: '#fff' }}>📤</Text>
-                                <Text style={styles.publishButtonText}>Soruyu Yayınla</Text>
-                            </>
-                        )}
+                      <Ionicons name="close-circle" size={20} color="#EF4444" />
                     </TouchableOpacity>
+                  </View>
+                ))}
+              </ScrollView>
+            )}
+          </View>
 
-                    <View style={styles.bottomSpacer} />
-                </ScrollView>
-            </KeyboardAvoidingView>
-        </SafeAreaView>
-    );
+          {/* Anonymous Switch */}
+          {settings.allowAnonymous && (
+            <View style={styles.anonCard}>
+              <View style={styles.anonLeft}>
+                <View style={styles.anonIcon}>
+                  <Ionicons name="eye-off-outline" size={18} color={theme.colors.primary} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.anonTitle}>Anonim Olarak Sor</Text>
+                  <Text style={styles.anonSubtitle}>
+                    Kullanıcı adınız ve profiliniz gizlenir
+                  </Text>
+                </View>
+              </View>
+              <Switch
+                value={isAnonymous}
+                onValueChange={setIsAnonymous}
+                trackColor={{ false: theme.colors.border, true: theme.colors.primary }}
+                thumbColor="#FFFFFF"
+              />
+            </View>
+          )}
+
+          <TouchableOpacity
+            style={[
+              styles.submitBtn,
+              (createQuestionMutation.isPending ||
+                !settings.allowNewQuestions ||
+                quotaExceeded) &&
+                styles.submitBtnDisabled,
+            ]}
+            disabled={
+              createQuestionMutation.isPending ||
+              !settings.allowNewQuestions ||
+              quotaExceeded
+            }
+            onPress={handleSubmit}
+            activeOpacity={0.88}
+          >
+            {createQuestionMutation.isPending ? (
+              <ActivityIndicator color="#FFFFFF" />
+            ) : (
+              <>
+                <Ionicons name="send" size={16} color="#FFFFFF" />
+                <Text style={styles.submitBtnText}>Soruyu Yayınla</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
+  );
 }
 
 const createStyles = (theme: ReturnType<typeof useTheme>) =>
-    StyleSheet.create({
-        safeArea: {
-            flex: 1,
-            backgroundColor: theme.colors.background,
-        },
-        container: {
-            flex: 1,
-        },
-        publishButton: {
-            fontSize: 16,
-            fontWeight: '600',
-            color: theme.colors.primary,
-        },
-        scrollView: {
-            flex: 1,
-        },
-        scrollContent: {
-            padding: theme.spacing.lg,
-        },
-        quotaCard: {
-            backgroundColor: '#E8F5E9',
-            borderRadius: 12,
-            padding: theme.spacing.md,
-            marginBottom: theme.spacing.lg,
-        },
-        quotaCardExceeded: {
-            backgroundColor: '#FFEBEE',
-        },
-        quotaRow: {
-            flexDirection: 'row',
-            alignItems: 'center',
-            gap: theme.spacing.sm,
-        },
-        quotaText: {
-            fontSize: 14,
-            fontWeight: '600',
-            color: theme.colors.text,
-        },
-        upgradeButton: {
-            backgroundColor: theme.colors.primary,
-            borderRadius: 8,
-            paddingVertical: theme.spacing.xs,
-            paddingHorizontal: theme.spacing.md,
-            marginTop: theme.spacing.sm,
-            alignSelf: 'flex-start',
-        },
-        upgradeButtonText: {
-            fontSize: 13,
-            fontWeight: '600',
-            color: '#fff',
-        },
-        section: {
-            marginBottom: theme.spacing.xl,
-        },
-        label: {
-            fontSize: 15,
-            fontWeight: '600',
-            color: theme.colors.text,
-            marginBottom: theme.spacing.sm,
-        },
-        required: {
-            color: theme.colors.error,
-        },
-        input: {
-            backgroundColor: theme.colors.backgroundCard,
-            borderWidth: 1,
-            borderColor: theme.colors.border,
-            borderRadius: 12,
-            padding: theme.spacing.md,
-            fontSize: 16,
-            color: theme.colors.text,
-        },
-        inputError: {
-            borderColor: theme.colors.error,
-        },
-        textArea: {
-            minHeight: 150,
-            textAlignVertical: 'top',
-        },
-        inputFooter: {
-            flexDirection: 'row',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            marginTop: theme.spacing.xs,
-        },
-        hint: {
-            fontSize: 12,
-            color: theme.colors.textSecondary,
-        },
-        errorText: {
-            fontSize: 12,
-            color: theme.colors.error,
-        },
-        charCount: {
-            fontSize: 12,
-            color: theme.colors.textSecondary,
-        },
-        picker: {
-            backgroundColor: theme.colors.backgroundCard,
-            borderWidth: 1,
-            borderColor: theme.colors.border,
-            borderRadius: 12,
-            padding: theme.spacing.md,
-            flexDirection: 'row',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-        },
-        pickerContent: {
-            flexDirection: 'row',
-            alignItems: 'center',
-            gap: theme.spacing.sm,
-        },
-        categoryIcon: {
-            fontSize: 20,
-        },
-        pickerText: {
-            fontSize: 16,
-            color: theme.colors.text,
-        },
-        pickerPlaceholder: {
-            color: theme.colors.textSecondary,
-        },
-        categoryList: {
-            backgroundColor: theme.colors.backgroundCard,
-            borderWidth: 1,
-            borderColor: theme.colors.border,
-            borderRadius: 12,
-            marginTop: theme.spacing.sm,
-            maxHeight: 250,
-        },
-        categoryItem: {
-            flexDirection: 'row',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            padding: theme.spacing.md,
-            borderBottomWidth: 1,
-            borderBottomColor: theme.colors.border,
-        },
-        categoryItemLast: {
-            borderBottomWidth: 0,
-        },
-        categoryItemSelected: {
-            backgroundColor: theme.colors.primaryLight,
-        },
-        categoryItemContent: {
-            flexDirection: 'row',
-            alignItems: 'center',
-            gap: theme.spacing.sm,
-        },
-        categoryItemIcon: {
-            fontSize: 18,
-        },
-        categoryItemText: {
-            fontSize: 15,
-            color: theme.colors.text,
-        },
-        categoryItemTextSelected: {
-            fontWeight: '600',
-            color: theme.colors.primary,
-        },
-        tagsContainer: {
-            flexDirection: 'row',
-            flexWrap: 'wrap',
-            gap: theme.spacing.xs,
-            marginBottom: theme.spacing.sm,
-        },
-        tag: {
-            flexDirection: 'row',
-            alignItems: 'center',
-            gap: 6,
-            backgroundColor: theme.colors.primaryLight,
-            borderRadius: 16,
-            paddingVertical: 6,
-            paddingHorizontal: 12,
-        },
-        tagText: {
-            fontSize: 14,
-            fontWeight: '500',
-            color: theme.colors.primary,
-        },
-        tagInputContainer: {
-            flexDirection: 'row',
-            alignItems: 'center',
-            gap: theme.spacing.sm,
-            marginBottom: theme.spacing.xs,
-        },
-        tagInput: {
-            flex: 1,
-            backgroundColor: theme.colors.backgroundCard,
-            borderWidth: 1,
-            borderColor: theme.colors.border,
-            borderRadius: 12,
-            padding: theme.spacing.md,
-            fontSize: 16,
-            color: theme.colors.text,
-        },
-        addTagButton: {
-            padding: 4,
-        },
-        anonymousCard: {
-            flexDirection: 'row',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            backgroundColor: theme.colors.backgroundCard,
-            borderRadius: 12,
-            padding: theme.spacing.md,
-            borderWidth: 1,
-            borderColor: theme.colors.border,
-        },
-        anonymousLeft: {
-            flexDirection: 'row',
-            alignItems: 'center',
-            flex: 1,
-            gap: theme.spacing.sm,
-        },
-        anonymousIcon: {
-            width: 40,
-            height: 40,
-            borderRadius: 20,
-            backgroundColor: theme.colors.primaryLight,
-            alignItems: 'center',
-            justifyContent: 'center',
-        },
-        anonymousIconActive: {
-            backgroundColor: theme.colors.primary,
-        },
-        anonymousText: {
-            flex: 1,
-        },
-        anonymousTitle: {
-            fontSize: 15,
-            fontWeight: '600',
-            color: theme.colors.text,
-        },
-        anonymousDesc: {
-            fontSize: 12,
-            color: theme.colors.textSecondary,
-            marginTop: 2,
-        },
-        switch: {
-            width: 50,
-            height: 28,
-            borderRadius: 14,
-            backgroundColor: theme.colors.border,
-            padding: 2,
-            justifyContent: 'center',
-        },
-        switchActive: {
-            backgroundColor: theme.colors.primary,
-        },
-        switchThumb: {
-            width: 24,
-            height: 24,
-            borderRadius: 12,
-            backgroundColor: '#fff',
-            shadowColor: '#000',
-            shadowOffset: { width: 0, height: 2 },
-            shadowOpacity: 0.2,
-            shadowRadius: 2,
-            elevation: 2,
-        },
-        switchThumbActive: {
-            alignSelf: 'flex-end',
-        },
-        publishButtonLarge: {
-            flexDirection: 'row',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: theme.spacing.sm,
-            backgroundColor: theme.colors.primary,
-            borderRadius: 12,
-            padding: theme.spacing.lg,
-            marginTop: theme.spacing.xl,
-            shadowColor: theme.colors.primary,
-            shadowOffset: { width: 0, height: 4 },
-            shadowOpacity: 0.3,
-            shadowRadius: 8,
-            elevation: 4,
-        },
-        publishButtonDisabled: {
-            opacity: 0.6,
-        },
-        publishButtonText: {
-            fontSize: 17,
-            fontWeight: '700',
-            color: '#fff',
-        },
-        bottomSpacer: {
-            height: 40,
-        },
-    });
+  StyleSheet.create({
+    safeArea: {
+      flex: 1,
+      backgroundColor: theme.colors.background,
+    },
+    topBar: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.colors.border,
+      backgroundColor: theme.colors.backgroundCard,
+    },
+    iconBtn: {
+      width: 36,
+      height: 36,
+      borderRadius: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: theme.colors.background,
+    },
+    topTitle: {
+      fontSize: 16,
+      fontWeight: '800',
+      color: theme.colors.text,
+    },
+    publishPill: {
+      backgroundColor: theme.colors.primary,
+      paddingHorizontal: 14,
+      paddingVertical: 8,
+      borderRadius: 999,
+      minWidth: 72,
+      alignItems: 'center',
+    },
+    publishPillDisabled: {
+      opacity: 0.5,
+    },
+    publishPillText: {
+      color: '#FFFFFF',
+      fontSize: 13,
+      fontWeight: '700',
+    },
+    scroll: {
+      flex: 1,
+    },
+    scrollContent: {
+      padding: 16,
+      paddingBottom: 40,
+      gap: 14,
+    },
+    heroCard: {
+      borderRadius: 20,
+      padding: 16,
+    },
+    heroTopRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 10,
+    },
+    heroBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 5,
+      backgroundColor: 'rgba(255,255,255,0.2)',
+      paddingHorizontal: 10,
+      paddingVertical: 4,
+      borderRadius: 999,
+    },
+    heroBadgeText: {
+      color: '#FFFFFF',
+      fontSize: 11.5,
+      fontWeight: '700',
+    },
+    quotaPill: {
+      backgroundColor: 'rgba(0,0,0,0.2)',
+      paddingHorizontal: 10,
+      paddingVertical: 4,
+      borderRadius: 999,
+    },
+    quotaPillText: {
+      color: '#FFFFFF',
+      fontSize: 11.5,
+      fontWeight: '700',
+    },
+    heroTitle: {
+      color: '#FFFFFF',
+      fontSize: 18,
+      fontWeight: '800',
+      marginBottom: 4,
+    },
+    heroSubtitle: {
+      color: 'rgba(255,255,255,0.88)',
+      fontSize: 12.5,
+      lineHeight: 18,
+    },
+    rewardRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      marginTop: 10,
+    },
+    rewardText: {
+      color: '#FDE68A',
+      fontSize: 12,
+      fontWeight: '700',
+    },
+    warningCard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      padding: 12,
+      borderRadius: 14,
+      backgroundColor: 'rgba(245, 158, 11, 0.12)',
+      borderWidth: 1,
+      borderColor: 'rgba(245, 158, 11, 0.35)',
+    },
+    warningText: {
+      flex: 1,
+      fontSize: 12.5,
+      color: theme.colors.text,
+      fontWeight: '600',
+    },
+    card: {
+      backgroundColor: theme.colors.backgroundCard,
+      borderRadius: 18,
+      padding: 14,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+    },
+    labelRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 10,
+    },
+    label: {
+      fontSize: 14,
+      fontWeight: '800',
+      color: theme.colors.text,
+    },
+    requiredMark: {
+      fontSize: 11.5,
+      fontWeight: '700',
+      color: theme.colors.primary,
+    },
+    counterText: {
+      fontSize: 11.5,
+      color: theme.colors.textSecondary,
+      fontWeight: '600',
+    },
+    categoryWrap: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+    },
+    categoryChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 5,
+      paddingHorizontal: 11,
+      paddingVertical: 7,
+      borderRadius: 999,
+      backgroundColor: theme.colors.background,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+    },
+    categoryChipText: {
+      fontSize: 12,
+      fontWeight: '700',
+      color: theme.colors.text,
+    },
+    input: {
+      backgroundColor: theme.colors.background,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      borderRadius: 12,
+      paddingHorizontal: 12,
+      paddingVertical: 11,
+      fontSize: 14,
+      color: theme.colors.text,
+    },
+    textArea: {
+      backgroundColor: theme.colors.background,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      borderRadius: 12,
+      paddingHorizontal: 12,
+      paddingVertical: 11,
+      fontSize: 14,
+      color: theme.colors.text,
+      minHeight: 130,
+    },
+    inputError: {
+      borderColor: '#EF4444',
+    },
+    errorText: {
+      color: '#EF4444',
+      fontSize: 12,
+      fontWeight: '600',
+      marginTop: 6,
+    },
+    tagInputRow: {
+      flexDirection: 'row',
+      gap: 8,
+      alignItems: 'center',
+    },
+    addTagBtn: {
+      width: 44,
+      height: 44,
+      borderRadius: 12,
+      backgroundColor: theme.colors.primary,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    tagsList: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+      marginTop: 10,
+    },
+    tagPill: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 5,
+      paddingHorizontal: 10,
+      paddingVertical: 5,
+      borderRadius: 999,
+      backgroundColor: theme.isDark ? 'rgba(236,72,153,0.14)' : '#FDF2F8',
+    },
+    tagPillText: {
+      fontSize: 12,
+      fontWeight: '700',
+      color: theme.colors.primary,
+    },
+    imageSectionCard: {
+      backgroundColor: theme.colors.backgroundCard,
+      borderRadius: 18,
+      padding: 14,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+    },
+    imageSectionHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    pickImageBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 10,
+      backgroundColor: theme.colors.primary + '18',
+    },
+    pickImageBtnText: {
+      fontSize: 12,
+      fontWeight: '700',
+      color: theme.colors.primary,
+    },
+    anonCard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      backgroundColor: theme.colors.backgroundCard,
+      borderRadius: 18,
+      padding: 14,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+    },
+    anonLeft: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      flex: 1,
+    },
+    anonIcon: {
+      width: 36,
+      height: 36,
+      borderRadius: 11,
+      backgroundColor: theme.isDark ? 'rgba(236,72,153,0.14)' : '#FDF2F8',
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    anonTitle: {
+      fontSize: 14,
+      fontWeight: '700',
+      color: theme.colors.text,
+    },
+    anonSubtitle: {
+      fontSize: 12,
+      color: theme.colors.textSecondary,
+    },
+    submitBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      backgroundColor: theme.colors.primary,
+      borderRadius: 16,
+      paddingVertical: 15,
+      marginTop: 4,
+    },
+    submitBtnDisabled: {
+      opacity: 0.5,
+    },
+    submitBtnText: {
+      color: '#FFFFFF',
+      fontSize: 15,
+      fontWeight: '800',
+    },
+  });

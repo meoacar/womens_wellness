@@ -154,6 +154,18 @@ export function getRouteMeta(
           'Reach the Kadın Atlası support team for app assistance, partnerships, or KVKK / GDPR data subject requests.',
       },
     },
+    '/guncellemeler': {
+      tr: {
+        title: 'Güncellemeler & Sürüm Notları — Kadın Atlası',
+        description:
+          'Kadın Atlası mobil uygulaması, NOVA AI ve web platformu sürüm notları ve tüm güncellemeler.',
+      },
+      en: {
+        title: 'Updates & Changelog — Kadın Atlası',
+        description:
+          'Release notes and product updates for Kadın Atlası mobile app, NOVA AI, and web.',
+      },
+    },
     '/sayfa/hakkimizda': {
       tr: {
         title: 'Hakkımızda ve Kurumsal Künye — Kadın Atlası',
@@ -226,6 +238,7 @@ export const translations = {
       calculators: 'Hesaplayıcılar',
       discover: 'Keşfet',
       premium: 'Premium',
+      updates: 'Güncellemeler',
       contact: 'İletişim & Destek',
       download: 'Uygulamayı İndir',
       ariaSwitchLang: 'Dili değiştir (İngilizceye geç)',
@@ -370,6 +383,7 @@ export const translations = {
       calculators: 'Calculators',
       discover: 'Discover',
       premium: 'Premium',
+      updates: 'Updates',
       contact: 'Contact & Support',
       download: 'Get the App',
       ariaSwitchLang: 'Switch language to Turkish',

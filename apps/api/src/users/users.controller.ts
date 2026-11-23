@@ -272,6 +272,22 @@ export class UsersController {
     return this.usersService.exportUserData(user.id);
   }
 
+  @Post('me/backup-email')
+  @UseGuards(AuthGuard('jwt'))
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Send portable JSON backup to user email' })
+  async sendBackupToEmail(@CurrentUser() user: any) {
+    return this.usersService.sendBackupToEmail(user.id);
+  }
+
+  @Post('me/restore-backup')
+  @UseGuards(AuthGuard('jwt'))
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Restore user data from portable JSON backup' })
+  async restoreBackup(@CurrentUser() user: any, @Body() body: any) {
+    return this.usersService.restoreUserBackup(user.id, body);
+  }
+
   @Get('me/retention-offer')
   @UseGuards(AuthGuard('jwt'))
   @ApiBearerAuth()

@@ -353,12 +353,11 @@ export class PushService {
       return { status: 'error', message: 'Quiet hours active' };
     }
 
-    let queuedId: string | null = null;
-    if (options?.queueForDevice !== false) {
-      queuedId = await this.enqueuePendingDeviceNotification(userId, prefs, message);
-    }
-
     if (!pushToken) {
+      let queuedId: string | null = null;
+      if (options?.queueForDevice !== false) {
+        queuedId = await this.enqueuePendingDeviceNotification(userId, prefs, message);
+      }
       this.logger.warn(`No push token for user ${userId}; queued=${Boolean(queuedId)}`);
       if (queuedId) {
         return {
@@ -377,7 +376,7 @@ export class PushService {
       (pushToken.startsWith('ExponentPushToken[') || pushToken.startsWith('ExpoPushToken['));
 
     if (!isExpoToken) {
-      return this.sendFcmPush(userId, pushToken, message, queuedId);
+      return this.sendFcmPush(userId, pushToken, message, null);
     }
 
     try {

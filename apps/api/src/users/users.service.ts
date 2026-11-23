@@ -1,14 +1,18 @@
-import { Injectable, BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import { Injectable, BadRequestException, ConflictException, NotFoundException, Optional } from '@nestjs/common';
 import { SubscriptionStatus, SubscriptionTier } from '@prisma/client';
 import * as fs from 'fs';
 import * as path from 'path';
 import { PrismaService } from '../prisma/prisma.service';
+import { MailService } from '../mail/mail.service';
 import { resolveUploadsDir } from '../common/utils/uploads';
 import type { ClientTelemetry } from '../common/utils/client-telemetry';
 
 @Injectable()
 export class UsersService {
-  constructor(private readonly prisma: PrismaService) { }
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly mailService?: MailService,
+  ) { }
 
   async isUsernameAvailable(username: string): Promise<boolean> {
     const normalizedUsername = username.toLowerCase();
@@ -960,6 +964,145 @@ export class UsersService {
       },
       supportTickets: supportTicketFlags.map((f) => f.valueJson),
       kvkkConsentLogs,
+    };
+  }
+
+  async sendBackupToEmail(userId: string) {
+    if (!this.mailService) {
+      throw new BadRequestException('E-posta servisi şu an kullanılamıyor.');
+    }
+    const exportData = await this.exportUserData(userId);
+    const email = exportData.user?.email;
+    if (!email) {
+      throw new BadRequestException('Hesabınıza tanımlı e-posta adresi bulunamadı.');
+    }
+    const dateStr = new Date().toISOString().slice(0, 10);
+    const filename = `kadin-atlasi-yedek-${dateStr}.json`;
+    const jsonContent = JSON.stringify(exportData, null, 2);
+
+    await this.mailService.sendBackupEmail(email, filename, jsonContent);
+    return { success: true, sentTo: email, filename };
+  }
+
+  async restoreUserBackup(userId: string, payload: any) {
+    if (!payload || typeof payload !== 'object') {
+      throw new BadRequestException('Geçersiz yedek dosyası formatı.');
+    }
+
+    let restoredCycles = 0;
+    let restoredDailyLogs = 0;
+    let restoredWaterLogs = 0;
+    let restoredSleepLogs = 0;
+
+    if (Array.isArray(payload.cycles)) {
+      const existingCycles = await this.prisma.periodCycle.findMany({
+        where: { userId },
+        select: { startDate: true },
+      });
+      const existingDays = new Set(
+        existingCycles.map((c) => new Date(c.startDate).toISOString().slice(0, 10)),
+      );
+
+      for (const c of payload.cycles) {
+        if (!c?.startDate) continue;
+        const start = new Date(c.startDate);
+        if (Number.isNaN(start.getTime())) continue;
+        const dayKey = start.toISOString().slice(0, 10);
+        if (existingDays.has(dayKey)) continue;
+
+        const end = c.endDate ? new Date(c.endDate) : null;
+        await this.prisma.periodCycle.create({
+          data: {
+            userId,
+            startDate: start,
+            endDate: end && !Number.isNaN(end.getTime()) ? end : null,
+            notes: typeof c.notes === 'string' ? c.notes : null,
+          },
+        });
+        existingDays.add(dayKey);
+        restoredCycles++;
+      }
+    }
+
+    if (Array.isArray(payload.dailyLogs)) {
+      for (const d of payload.dailyLogs) {
+        if (!d?.date) continue;
+        const dt = new Date(d.date);
+        if (Number.isNaN(dt.getTime())) continue;
+        await this.prisma.dailyLog.upsert({
+          where: { userId_date: { userId, date: dt } },
+          update: {},
+          create: {
+            userId,
+            date: dt,
+            flow: d.flow ?? null,
+            cramps: typeof d.cramps === 'number' ? d.cramps : null,
+            symptoms: Array.isArray(d.symptoms) ? d.symptoms : [],
+            mood: Array.isArray(d.mood) ? d.mood : [],
+            healthNotes: typeof d.healthNotes === 'string' ? d.healthNotes : null,
+          },
+        });
+        restoredDailyLogs++;
+      }
+    }
+
+    if (Array.isArray(payload.waterLogs)) {
+      const existingWater = await this.prisma.waterLog.findMany({
+        where: { userId },
+        select: { loggedAt: true, amountMl: true },
+      });
+      const waterKeys = new Set(
+        existingWater.map((w) => `${new Date(w.loggedAt).toISOString()}:${w.amountMl}`),
+      );
+      for (const w of payload.waterLogs) {
+        if (!w?.loggedAt || typeof w.amountMl !== 'number') continue;
+        const dt = new Date(w.loggedAt);
+        if (Number.isNaN(dt.getTime())) continue;
+        const key = `${dt.toISOString()}:${w.amountMl}`;
+        if (waterKeys.has(key)) continue;
+        await this.prisma.waterLog.create({
+          data: { userId, loggedAt: dt, amountMl: w.amountMl },
+        });
+        waterKeys.add(key);
+        restoredWaterLogs++;
+      }
+    }
+
+    if (Array.isArray(payload.sleepLogs)) {
+      const existingSleep = await this.prisma.sleepLog.findMany({
+        where: { userId },
+        select: { sleepDate: true, durationMin: true },
+      });
+      const sleepKeys = new Set(
+        existingSleep.map((s) => `${new Date(s.sleepDate).toISOString().slice(0, 10)}:${s.durationMin}`),
+      );
+      for (const s of payload.sleepLogs) {
+        if (!s?.sleepDate || typeof s.durationMin !== 'number') continue;
+        const dt = new Date(s.sleepDate);
+        if (Number.isNaN(dt.getTime())) continue;
+        const key = `${dt.toISOString().slice(0, 10)}:${s.durationMin}`;
+        if (sleepKeys.has(key)) continue;
+        await this.prisma.sleepLog.create({
+          data: {
+            userId,
+            sleepDate: dt,
+            durationMin: s.durationMin,
+            quality: typeof s.quality === 'number' ? s.quality : null,
+          },
+        });
+        sleepKeys.add(key);
+        restoredSleepLogs++;
+      }
+    }
+
+    return {
+      success: true,
+      restored: {
+        cycles: restoredCycles,
+        dailyLogs: restoredDailyLogs,
+        waterLogs: restoredWaterLogs,
+        sleepLogs: restoredSleepLogs,
+      },
     };
   }
 

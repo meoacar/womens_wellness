@@ -1,4 +1,4 @@
-import { View, Text, StyleSheet, TouchableOpacity, Animated } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Animated, Image } from 'react-native';
 import { useTheme } from '@/hooks/useTheme';
 import { Ionicons } from '@expo/vector-icons';
 import { Question } from '@/types/qna';
@@ -87,6 +87,12 @@ export const QuestionCard = memo(function QuestionCard({
                                         ? 'Anonim Üye'
                                         : question.user?.displayName || 'Topluluk Üyesi'}
                                 </Text>
+                                {!question.isAnonymous && (question.user?.isPremium || question.isPremium) && (
+                                    <View style={styles.inlinePremiumBadge}>
+                                        <Ionicons name="sparkles" size={10} color="#D97706" />
+                                        <Text style={styles.inlinePremiumText}>PRO</Text>
+                                    </View>
+                                )}
                                 <Text style={styles.dotSeparator}>•</Text>
                                 <Text style={styles.timestamp}>
                                     {formatTimestamp(question.createdAt)}
@@ -117,6 +123,19 @@ export const QuestionCard = memo(function QuestionCard({
                 <Text style={styles.content} numberOfLines={2}>
                     {question.content}
                 </Text>
+
+                {Array.isArray(question.imageUrls) && question.imageUrls.length > 0 && (
+                    <View style={styles.imagePreviewRow}>
+                        {question.imageUrls.slice(0, 5).map((uri, idx) => (
+                            <Image
+                                key={`${uri}-${idx}`}
+                                source={{ uri }}
+                                style={styles.imageThumb}
+                                resizeMode="cover"
+                            />
+                        ))}
+                    </View>
+                )}
 
                 {/* Category & Tags */}
                 <View style={styles.tagsContainer}>
@@ -269,6 +288,33 @@ const createStyles = (theme: ReturnType<typeof useTheme>) =>
             fontWeight: '700',
             color: theme.colors.text,
             flexShrink: 1,
+        },
+        inlinePremiumBadge: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 2,
+            backgroundColor: 'rgba(245, 158, 11, 0.16)',
+            paddingHorizontal: 5,
+            paddingVertical: 1.5,
+            borderRadius: 6,
+            borderWidth: 1,
+            borderColor: 'rgba(245, 158, 11, 0.32)',
+        },
+        inlinePremiumText: {
+            fontSize: 9,
+            fontWeight: '800',
+            color: '#D97706',
+        },
+        imagePreviewRow: {
+            flexDirection: 'row',
+            gap: 8,
+            marginBottom: 10,
+        },
+        imageThumb: {
+            width: 72,
+            height: 72,
+            borderRadius: 10,
+            backgroundColor: theme.colors.backgroundSecondary,
         },
         dotSeparator: {
             fontSize: 12,

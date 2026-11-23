@@ -83,6 +83,63 @@ export class QnaNotificationService {
         return updatedQnaPreferences;
     }
 
+    async getUnreadCount(userId: string): Promise<{ unreadCount: number }> {
+        const profile = await this.prisma.profile.findUnique({
+            where: { userId },
+            select: { preferencesJson: true },
+        });
+        const prefs = (profile?.preferencesJson as any) || {};
+        return { unreadCount: Number(prefs.qnaUnreadCount) || 0 };
+    }
+
+    async markNotificationsRead(userId: string): Promise<{ unreadCount: number }> {
+        const profile = await this.prisma.profile.findUnique({
+            where: { userId },
+            select: { preferencesJson: true },
+        });
+        if (!profile) {
+            return { unreadCount: 0 };
+        }
+        const prefs = (profile.preferencesJson as any) || {};
+        if ((Number(prefs.qnaUnreadCount) || 0) > 0) {
+            await this.prisma.profile.update({
+                where: { userId },
+                data: {
+                    preferencesJson: {
+                        ...prefs,
+                        qnaUnreadCount: 0,
+                    } as any,
+                },
+            });
+        }
+        return { unreadCount: 0 };
+    }
+
+    private async incrementUnreadCount(userId: string): Promise<void> {
+        try {
+            const profile = await this.prisma.profile.findUnique({
+                where: { userId },
+                select: { preferencesJson: true },
+            });
+            if (!profile) return;
+            const prefs = (profile.preferencesJson as any) || {};
+            const nextUnread = (Number(prefs.qnaUnreadCount) || 0) + 1;
+            await this.prisma.profile.update({
+                where: { userId },
+                data: {
+                    preferencesJson: {
+                        ...prefs,
+                        qnaUnreadCount: nextUnread,
+                    } as any,
+                },
+            });
+        } catch (error: any) {
+            this.logger.warn(
+                `Failed to increment qnaUnreadCount for ${userId}: ${error?.message}`,
+            );
+        }
+    }
+
     /**
      * Send QnA notification to user
      */
@@ -99,6 +156,9 @@ export class QnaNotificationService {
                 );
                 return;
             }
+
+            // Increment in-app unread counter so badge persists even if OS notification is dismissed
+            await this.incrementUnreadCount(userId);
 
             // Get notification content
             const { title, body } = this.getNotificationContent(data);

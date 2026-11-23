@@ -504,6 +504,15 @@ export const chatService = {
   // SSE streaming handled separately in component
   streamUrl: (conversationId: string) =>
     `${getApiBaseUrl()}/chat/${conversationId}/stream`,
+
+  // Report AI response (Google Play AI-generated content policy)
+  reportMessage: (data: {
+    messageId?: string;
+    conversationId?: string;
+    messageContent: string;
+    reason: string;
+    description?: string;
+  }) => api.post<{ success: boolean; reportId: string; message: string }>('/chat/report', data),
 };
 
 // Quota endpoints
@@ -1389,7 +1398,63 @@ export const qnaService = {
 
   // Quota
   getQuota: () =>
-    api.get<QnaQuota>('/qna/quota/status'),
+    api.get<QnaQuota>('/qna/questions/quota/status'),
+
+  // Notifications unread badge
+  getUnreadNotificationCount: () =>
+    api.get<{ unreadCount: number }>('/qna/notifications/unread-count'),
+
+  markNotificationsRead: () =>
+    api.post<{ unreadCount: number }>('/qna/notifications/mark-read', {}),
+
+  // User blocking (Google Play UGC compliance)
+  blockUser: (targetUserId: string, reason?: string) =>
+    api.post<{ success: boolean; message: string }>(`/qna/moderation/block/${targetUserId}`, { reason }),
+
+  unblockUser: (targetUserId: string) =>
+    api.delete<{ success: boolean; message: string }>(`/qna/moderation/block/${targetUserId}`),
+
+  getBlockedUsers: () =>
+    api.get<Array<{
+      id: string;
+      blockedUserId: string;
+      displayName: string;
+      profilePictureUrl?: string | null;
+      reason?: string | null;
+      createdAt: string;
+    }>>('/qna/moderation/blocked-users'),
+
+  uploadImage: async (fileUri: string): Promise<{ imageUrl: string }> => {
+    const token = await SecureStore.getItemAsync('accessToken');
+    if (!token) {
+      throw new Error('Oturum süresi doldu. Lütfen tekrar giriş yapın.');
+    }
+    const formData = new FormData();
+    const filename = fileUri.split('/').pop() || 'community-image.jpg';
+    const match = /\.(\w+)$/.exec(filename);
+    const type = match ? `image/${match[1]}` : 'image/jpeg';
+
+    formData.append('file', {
+      uri: fileUri,
+      name: filename,
+      type,
+    } as any);
+
+    const response = await fetch(`${getApiBaseUrl()}/qna/questions/upload-image`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const errData = await response.json().catch(() => ({}));
+      throw new Error(errData?.message || 'Resim yüklenemedi');
+    }
+
+    return response.json();
+  },
 };
 
 // Pages endpoints

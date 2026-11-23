@@ -1,10 +1,11 @@
-import { Injectable, NotFoundException, ForbiddenException, Logger, BadRequestException, forwardRef, Inject } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, Logger, BadRequestException, Optional, forwardRef, Inject } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateQuestionDto, AdminCreateQuestionDto, UpdateQuestionDto, AdminUpdateQuestionDto, CreateAnswerDto, UpdateAnswerDto, CreateCommentDto, QuestionFiltersDto, SortType } from './dto';
 import { Question, Answer, QuestionComment, AnswerComment, QuestionStatus, SubscriptionStatus } from '@prisma/client';
 import { ReputationService } from './reputation.service';
 import { ModerationService } from './moderation.service';
 import { QnaNotificationService } from './qna-notification.service';
+import { CommunitySettingsService } from './community-settings.service';
 import {
     sanitizeQuestionResponse,
     sanitizeAnswerResponse,
@@ -68,12 +69,56 @@ export class QnaService {
         private moderationService: ModerationService,
         @Inject(forwardRef(() => QnaNotificationService))
         private notificationService: QnaNotificationService,
+        @Optional() private communitySettings?: CommunitySettingsService,
     ) { }
 
     // ==================== QUESTIONS ====================
 
     async createQuestion(userId: string, dto: CreateQuestionDto): Promise<any> {
         try {
+            const settings = this.communitySettings
+                ? await this.communitySettings.getSettings()
+                : null;
+
+            if (settings) {
+                if (!settings.allowNewQuestions) {
+                    throw new BadRequestException('Yeni soru paylaşımı şu an yönetici tarafından geçici olarak kapatılmıştır.');
+                }
+
+                const titleLen = (dto.title || '').trim().length;
+                if (titleLen < settings.titleMinLength || titleLen > settings.titleMaxLength) {
+                    throw new BadRequestException(
+                        `Soru başlığı ${settings.titleMinLength} ile ${settings.titleMaxLength} karakter arasında olmalıdır.`
+                    );
+                }
+
+                const contentLen = (dto.content || '').trim().length;
+                if (contentLen < settings.contentMinLength || contentLen > settings.contentMaxLength) {
+                    throw new BadRequestException(
+                        `Soru içeriği ${settings.contentMinLength} ile ${settings.contentMaxLength} karakter arasında olmalıdır.`
+                    );
+                }
+
+                if (!settings.enabledCategories.includes(dto.category)) {
+                    throw new BadRequestException('Seçilen kategori şu an aktif değil.');
+                }
+
+                if ((dto.tags?.length || 0) > settings.maxTags) {
+                    throw new BadRequestException(`En fazla ${settings.maxTags} etiket ekleyebilirsiniz.`);
+                }
+
+                const startOfDay = new Date();
+                startOfDay.setHours(0, 0, 0, 0);
+                const todayCount = await this.prisma.question.count({
+                    where: { userId, createdAt: { gte: startOfDay } },
+                });
+                if (todayCount >= settings.dailyQuestionLimit) {
+                    throw new BadRequestException(
+                        `Günlük soru sorma limitinize (${settings.dailyQuestionLimit}) ulaştınız. Yarın tekrar deneyebilirsiniz.`
+                    );
+                }
+            }
+
             // Spam kontrolü
             const isSpam = this.moderationService.checkSpam(dto.title + ' ' + dto.content);
             if (isSpam) {
@@ -81,27 +126,43 @@ export class QnaService {
             }
 
             // Check quota and get premium status
-            const { isPremium, canAsk } = await this.checkQuota(userId);
+            const { isPremium, canAsk, limit } = await this.checkQuota(userId);
 
             if (!canAsk) {
                 throw new BadRequestException(
                     isPremium
-                        ? 'Aylık soru limitinize ulaştınız (20 soru). Lütfen gelecek ay tekrar deneyin.'
-                        : 'Aylık soru limitinize ulaştınız (5 soru). Premium üyelik ile ayda 20 soru sorabilirsiniz.'
+                        ? `Aylık soru limitinize ulaştınız (${limit} soru). Lütfen gelecek ay tekrar deneyin.`
+                        : `Aylık soru limitinize ulaştınız (${limit} soru). Premium üyelik ile daha fazla soru sorabilirsiniz.`
+                );
+            }
+
+            const isAnonymous = settings && !settings.allowAnonymous ? false : (dto.isAnonymous || false);
+            const rawImages = Array.isArray(dto.imageUrls) ? dto.imageUrls : [];
+            const imageQuota = await this.getWeeklyImageQuota(userId, isPremium);
+            if (rawImages.length > imageQuota.imageRemaining) {
+                throw new BadRequestException(
+                    isPremium
+                        ? `Haftalık resim ekleme hakkınız doldu (kalan: ${imageQuota.imageRemaining}/5).`
+                        : `Ücretsiz üyeler haftada en fazla 2 resim ekleyebilir (kalan: ${imageQuota.imageRemaining}/2). Premium ile haftada 5 resim ekleyebilirsiniz.`,
                 );
             }
 
             const question = await this.prisma.question.create({
                 data: {
                     userId,
-                    title: dto.title,
-                    content: dto.content,
+                    title: dto.title.trim(),
+                    content: dto.content.trim(),
                     category: dto.category,
-                    tags: dto.tags || [],
-                    isAnonymous: dto.isAnonymous || false,
+                    tags: (dto.tags || []).slice(0, settings?.maxTags ?? 5),
+                    isAnonymous,
                     isPremium,
+                    imageUrls: rawImages.slice(0, imageQuota.imageRemaining),
                 },
             });
+
+            if (rawImages.length > 0) {
+                await this.consumeWeeklyImages(userId, rawImages.length);
+            }
 
             // Update quota
             await this.incrementQuota(userId);
@@ -127,6 +188,15 @@ export class QnaService {
         }
     }
 
+    private async getBlockedUserIds(viewerUserId?: string): Promise<string[]> {
+        if (!viewerUserId) return [];
+        const blocks = await this.prisma.userBlock.findMany({
+            where: { blockerId: viewerUserId },
+            select: { blockedUserId: true },
+        });
+        return blocks.map((b) => b.blockedUserId);
+    }
+
     async getQuestions(filters: QuestionFiltersDto, userId?: string): Promise<any> {
         try {
             const { category, tags, status, sort, search, page = 1, limit = 20, sortBy, sortOrder } = filters;
@@ -134,6 +204,11 @@ export class QnaService {
 
             // Build where clause
             const where: any = {};
+
+            const blockedIds = await this.getBlockedUserIds(userId);
+            if (blockedIds.length > 0) {
+                where.userId = { notIn: blockedIds };
+            }
 
             if (category) {
                 where.category = category;
@@ -202,6 +277,11 @@ export class QnaService {
                             reputation: {
                                 select: {
                                     totalPoints: true,
+                                },
+                            },
+                            subscription: {
+                                select: {
+                                    status: true,
                                 },
                             },
                         },
@@ -278,6 +358,11 @@ export class QnaService {
                             reputation: {
                                 select: {
                                     totalPoints: true,
+                                },
+                            },
+                            subscription: {
+                                select: {
+                                    status: true,
                                 },
                             },
                         },
@@ -579,11 +664,23 @@ export class QnaService {
                 throw new NotFoundException('Soru bulunamadı');
             }
 
+            const { isPremium } = await this.checkQuota(userId);
+            const rawImages = Array.isArray(dto.imageUrls) ? dto.imageUrls : [];
+            const imageQuota = await this.getWeeklyImageQuota(userId, isPremium);
+            if (rawImages.length > imageQuota.imageRemaining) {
+                throw new BadRequestException(
+                    isPremium
+                        ? `Haftalık resim ekleme hakkınız doldu (kalan: ${imageQuota.imageRemaining}/5).`
+                        : `Ücretsiz üyeler haftada en fazla 2 resim ekleyebilir (kalan: ${imageQuota.imageRemaining}/2). Premium ile haftada 5 resim ekleyebilirsiniz.`,
+                );
+            }
+
             const answer = await this.prisma.answer.create({
                 data: {
                     questionId,
                     userId,
                     content: dto.content,
+                    imageUrls: rawImages.slice(0, imageQuota.imageRemaining),
                 },
                 include: {
                     user: {
@@ -602,6 +699,11 @@ export class QnaService {
                                     totalPoints: true,
                                 },
                             },
+                            subscription: {
+                                select: {
+                                    status: true,
+                                },
+                            },
                         },
                     },
                     _count: {
@@ -611,6 +713,10 @@ export class QnaService {
                     },
                 },
             });
+
+            if (rawImages.length > 0) {
+                await this.consumeWeeklyImages(userId, rawImages.length);
+            }
 
             // Update question status to ANSWERED if it was OPEN
             if (question.status === QuestionStatus.OPEN) {
@@ -739,13 +845,17 @@ export class QnaService {
 
     async getAnswers(questionId: string, userId?: string): Promise<any[]> {
         try {
+            const blockedIds = await this.getBlockedUserIds(userId);
             const [question, answers] = await Promise.all([
                 this.prisma.question.findUnique({
                     where: { id: questionId },
                     select: { isAnonymous: true, userId: true },
                 }),
                 this.prisma.answer.findMany({
-                    where: { questionId },
+                    where: {
+                        questionId,
+                        ...(blockedIds.length > 0 ? { userId: { notIn: blockedIds } } : {}),
+                    },
                     orderBy: [
                         { isBestAnswer: 'desc' },
                         { voteCount: 'desc' },
@@ -1101,13 +1211,17 @@ export class QnaService {
 
     async getQuestionComments(questionId: string, viewerUserId?: string): Promise<any[]> {
         try {
+            const blockedIds = await this.getBlockedUserIds(viewerUserId);
             const [question, comments] = await Promise.all([
                 this.prisma.question.findUnique({
                     where: { id: questionId },
                     select: { isAnonymous: true, userId: true },
                 }),
                 this.prisma.questionComment.findMany({
-                    where: { questionId },
+                    where: {
+                        questionId,
+                        ...(blockedIds.length > 0 ? { userId: { notIn: blockedIds } } : {}),
+                    },
                     orderBy: { createdAt: 'asc' },
                     include: {
                         user: {
@@ -1141,6 +1255,7 @@ export class QnaService {
 
     async getAnswerComments(answerId: string, viewerUserId?: string): Promise<any[]> {
         try {
+            const blockedIds = await this.getBlockedUserIds(viewerUserId);
             const [answer, comments] = await Promise.all([
                 this.prisma.answer.findUnique({
                     where: { id: answerId },
@@ -1151,7 +1266,10 @@ export class QnaService {
                     },
                 }),
                 this.prisma.answerComment.findMany({
-                    where: { answerId },
+                    where: {
+                        answerId,
+                        ...(blockedIds.length > 0 ? { userId: { notIn: blockedIds } } : {}),
+                    },
                     orderBy: { createdAt: 'asc' },
                     include: {
                         user: {
@@ -1309,6 +1427,11 @@ export class QnaService {
                             reputation: {
                                 select: {
                                     totalPoints: true,
+                                },
+                            },
+                            subscription: {
+                                select: {
+                                    status: true,
                                 },
                             },
                         },
@@ -1477,6 +1600,11 @@ export class QnaService {
                                     totalPoints: true,
                                 },
                             },
+                            subscription: {
+                                select: {
+                                    status: true,
+                                },
+                            },
                         },
                     },
                     answers: {
@@ -1633,6 +1761,11 @@ export class QnaService {
                             reputation: {
                                 select: {
                                     totalPoints: true,
+                                },
+                            },
+                            subscription: {
+                                select: {
+                                    status: true,
                                 },
                             },
                         },
@@ -1961,15 +2094,21 @@ export class QnaService {
      * Check if user can ask a question based on quota
      * Returns premium status and whether user can ask
      */
-    private async checkQuota(userId: string): Promise<{ isPremium: boolean; canAsk: boolean }> {
+    private async checkQuota(userId: string): Promise<{ isPremium: boolean; canAsk: boolean; limit: number }> {
         try {
             // Get user subscription
             const subscription = await this.prisma.subscription.findUnique({
                 where: { userId },
             });
 
+            const settings = this.communitySettings
+                ? await this.communitySettings.getSettings()
+                : null;
+            const freeLimit = settings?.freeMonthlyQuestionLimit ?? 5;
+            const premiumLimit = settings?.premiumMonthlyQuestionLimit ?? 20;
+
             const isPremium = subscription?.status === SubscriptionStatus.ACTIVE;
-            const limit = isPremium ? 20 : 5;
+            const limit = isPremium ? premiumLimit : freeLimit;
 
             // Get or create quota for current month
             const monthKey = this.getCurrentMonthKey();
@@ -1989,8 +2128,8 @@ export class QnaService {
                         userId,
                         monthKey,
                         questionsAsked: 0,
-                        freeUserLimit: 5,
-                        premiumUserLimit: 20,
+                        freeUserLimit: freeLimit,
+                        premiumUserLimit: premiumLimit,
                         resetsAt: this.getNextMonthStart(),
                     },
                 });
@@ -1998,7 +2137,7 @@ export class QnaService {
 
             const canAsk = quota.questionsAsked < limit;
 
-            return { isPremium, canAsk };
+            return { isPremium, canAsk, limit };
         } catch (error) {
             this.logger.error(`Error checking quota for user ${userId}:`, error);
             throw error;
@@ -2062,30 +2201,108 @@ export class QnaService {
      * Get user's quota status
      * Public method for controllers to check quota
      */
+    private getCurrentWeekWindow(): { weekKey: string; imageResetsAt: Date } {
+        const now = new Date();
+        const day = now.getUTCDay(); // 0 = Sun, 1 = Mon ...
+        const diffToMonday = day === 0 ? -6 : 1 - day;
+        const monday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + diffToMonday));
+        const nextMonday = new Date(monday.getTime() + 7 * 24 * 60 * 60 * 1000);
+        return {
+            weekKey: monday.toISOString().slice(0, 10),
+            imageResetsAt: nextMonday,
+        };
+    }
+
+    private async getWeeklyImageQuota(userId: string, isPremium: boolean): Promise<{
+        imagesUsed: number;
+        imageLimit: number;
+        imageRemaining: number;
+        imageResetsAt: Date;
+    }> {
+        const { weekKey, imageResetsAt } = this.getCurrentWeekWindow();
+        const imageLimit = isPremium ? 5 : 2;
+        const quota = await this.prisma.qnaQuota.findUnique({
+            where: { userId },
+            select: { weekKey: true, weeklyImagesUsed: true, imageResetsAt: true },
+        });
+        const isCurrentWeek = quota?.weekKey === weekKey;
+        const imagesUsed = isCurrentWeek ? (quota?.weeklyImagesUsed ?? 0) : 0;
+        return {
+            imagesUsed,
+            imageLimit,
+            imageRemaining: Math.max(0, imageLimit - imagesUsed),
+            imageResetsAt: (isCurrentWeek && quota?.imageResetsAt) ? quota.imageResetsAt : imageResetsAt,
+        };
+    }
+
+    private async consumeWeeklyImages(userId: string, count: number): Promise<void> {
+        if (count <= 0) return;
+        const { weekKey, imageResetsAt } = this.getCurrentWeekWindow();
+        const monthKey = this.getCurrentMonthKey();
+        const existing = await this.prisma.qnaQuota.findUnique({
+            where: { userId },
+        });
+
+        if (!existing) {
+            await this.prisma.qnaQuota.create({
+                data: {
+                    userId,
+                    monthKey,
+                    questionsAsked: 0,
+                    resetsAt: this.getNextMonthStart(),
+                    weekKey,
+                    weeklyImagesUsed: count,
+                    imageResetsAt,
+                },
+            });
+            return;
+        }
+
+        const nextCount = existing.weekKey === weekKey
+            ? existing.weeklyImagesUsed + count
+            : count;
+
+        await this.prisma.qnaQuota.update({
+            where: { userId },
+            data: {
+                weekKey,
+                weeklyImagesUsed: nextCount,
+                imageResetsAt,
+            },
+        });
+    }
+
     async getQuotaStatus(userId: string): Promise<{
         questionsAsked: number;
         limit: number;
         remaining: number;
         isPremium: boolean;
         resetsAt: Date;
+        imagesUsed: number;
+        imageLimit: number;
+        imageRemaining: number;
+        imageResetsAt: Date;
     }> {
         try {
             this.logger.log(`Getting quota status for user: ${userId}`);
 
             if (!userId) {
                 this.logger.error('No userId provided to getQuotaStatus');
-                // Return default free user quota
+                const { imageResetsAt } = this.getCurrentWeekWindow();
                 return {
                     questionsAsked: 0,
                     limit: 5,
                     remaining: 5,
                     isPremium: false,
                     resetsAt: this.getNextMonthStart(),
+                    imagesUsed: 0,
+                    imageLimit: 2,
+                    imageRemaining: 2,
+                    imageResetsAt,
                 };
             }
 
-            const { isPremium } = await this.checkQuota(userId);
-            const limit = isPremium ? 20 : 5;
+            const { isPremium, limit } = await this.checkQuota(userId);
             const monthKey = this.getCurrentMonthKey();
 
             this.logger.log(`User ${userId} - isPremium: ${isPremium}, limit: ${limit}, monthKey: ${monthKey}`);
@@ -2101,6 +2318,7 @@ export class QnaService {
 
             const questionsAsked = quota?.questionsAsked || 0;
             const remaining = Math.max(0, limit - questionsAsked);
+            const imageQuota = await this.getWeeklyImageQuota(userId, isPremium);
 
             const result = {
                 questionsAsked,
@@ -2108,6 +2326,7 @@ export class QnaService {
                 remaining,
                 isPremium,
                 resetsAt: quota?.resetsAt || this.getNextMonthStart(),
+                ...imageQuota,
             };
 
             this.logger.log(`Quota result for user ${userId}:`, JSON.stringify(result));
@@ -2115,13 +2334,17 @@ export class QnaService {
             return result;
         } catch (error) {
             this.logger.error(`Error getting quota status for user ${userId}:`, error);
-            // Return default free user quota on error
+            const { imageResetsAt } = this.getCurrentWeekWindow();
             return {
                 questionsAsked: 0,
                 limit: 5,
                 remaining: 5,
                 isPremium: false,
                 resetsAt: this.getNextMonthStart(),
+                imagesUsed: 0,
+                imageLimit: 2,
+                imageRemaining: 2,
+                imageResetsAt,
             };
         }
     }

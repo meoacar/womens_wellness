@@ -294,4 +294,37 @@ export class ChatService {
 
     return { deleted: true };
   }
+
+  async reportMessage(
+    userId: string,
+    payload: {
+      messageId?: string;
+      conversationId?: string;
+      messageContent: string;
+      reason: string;
+      description?: string;
+    },
+  ) {
+    const content = (payload.messageContent || '').trim();
+    if (!content) {
+      throw new Error('Bildirilecek mesaj içeriği boş olamaz');
+    }
+
+    const report = await this.prisma.aiMessageReport.create({
+      data: {
+        userId,
+        conversationId: payload.conversationId || null,
+        messageId: payload.messageId || null,
+        messageContent: content.slice(0, 4000),
+        reason: (payload.reason || 'Uygunsuz içerik').trim(),
+        description: payload.description?.trim() || null,
+      },
+    });
+
+    return {
+      success: true,
+      reportId: report.id,
+      message: 'Bildiriminiz alındı. Ekibimiz tarafından incelenecektir.',
+    };
+  }
 }

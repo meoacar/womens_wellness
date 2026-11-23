@@ -9,6 +9,7 @@ import {
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useQuestions } from '@/hooks/useQna';
+import { useTheme } from '@/hooks/useTheme';
 import { Question, QuestionCategory } from '@/types/qna';
 
 interface RelatedQuestionsProps {
@@ -24,6 +25,7 @@ export function RelatedQuestions({
     tags = [],
     limit = 5,
 }: RelatedQuestionsProps) {
+    const theme = useTheme();
     const { data, isLoading } = useQuestions(
         {
             category,
@@ -38,10 +40,10 @@ export function RelatedQuestions({
 
     if (isLoading) {
         return (
-            <View style={styles.container}>
-                <Text style={styles.title}>İlgili Sorular</Text>
+            <View style={[styles.container, { backgroundColor: theme.colors.backgroundCard, borderColor: theme.colors.border }]}>
+                <Text style={[styles.title, { color: theme.colors.text }]}>İlgili Sorular</Text>
                 <View style={styles.loadingContainer}>
-                    <ActivityIndicator size="small" color="#8B5CF6" />
+                    <ActivityIndicator size="small" color={theme.colors.primary} />
                 </View>
             </View>
         );
@@ -57,10 +59,10 @@ export function RelatedQuestions({
     }
 
     return (
-        <View style={styles.container}>
+        <View style={[styles.container, { backgroundColor: theme.colors.backgroundCard, borderColor: theme.colors.border }]}>
             <View style={styles.header}>
-                <Ionicons name="link-outline" size={20} color="#8B5CF6" />
-                <Text style={styles.title}>İlgili Sorular</Text>
+                <Ionicons name="link-outline" size={20} color={theme.colors.primary} />
+                <Text style={[styles.title, { color: theme.colors.text }]}>İlgili Sorular</Text>
             </View>
 
             <View style={styles.questionsContainer}>
@@ -69,18 +71,18 @@ export function RelatedQuestions({
                         key={question.id}
                         style={[
                             styles.questionItem,
-                            index !== relatedQuestions.length - 1 && styles.questionItemBorder,
+                            index !== relatedQuestions.length - 1 && [styles.questionItemBorder, { borderBottomColor: theme.colors.border }],
                         ]}
                         onPress={() => router.push(`/community/${question.id}`)}
                     >
                         <View style={styles.questionContent}>
-                            <Text style={styles.questionTitle} numberOfLines={2}>
+                            <Text style={[styles.questionTitle, { color: theme.colors.text }]} numberOfLines={2}>
                                 {question.title}
                             </Text>
                             <View style={styles.questionMeta}>
                                 <View style={styles.metaItem}>
-                                    <Ionicons name="chatbubble-outline" size={12} color="#6B7280" />
-                                    <Text style={styles.metaText}>{question._count?.answers || 0} cevap</Text>
+                                    <Ionicons name="chatbubble-outline" size={12} color={theme.colors.textSecondary} />
+                                    <Text style={[styles.metaText, { color: theme.colors.textSecondary }]}>{question._count?.answers || 0} cevap</Text>
                                 </View>
                                 {question.status === 'ANSWERED' && (
                                     <View style={styles.answeredBadge}>
@@ -89,7 +91,7 @@ export function RelatedQuestions({
                                 )}
                             </View>
                         </View>
-                        <Ionicons name="chevron-forward" size={18} color="#9CA3AF" />
+                        <Ionicons name="chevron-forward" size={18} color={theme.colors.textSecondary} />
                     </TouchableOpacity>
                 ))}
             </View>
@@ -103,8 +105,8 @@ export function RelatedQuestions({
                     })
                 }
             >
-                <Text style={styles.seeMoreText}>Bu kategorideki diğer soruları gör</Text>
-                <Ionicons name="arrow-forward" size={16} color="#8B5CF6" />
+                <Text style={[styles.seeMoreText, { color: theme.colors.primary }]}>Bu kategorideki diğer soruları gör</Text>
+                <Ionicons name="arrow-forward" size={16} color={theme.colors.primary} />
             </TouchableOpacity>
         </View>
     );
@@ -113,6 +115,8 @@ export function RelatedQuestions({
 const styles = StyleSheet.create({
     container: {
         backgroundColor: '#FFFFFF',
+        borderWidth: 1,
+        borderColor: '#F3F4F6',
         borderRadius: 12,
         padding: 16,
         marginTop: 16,

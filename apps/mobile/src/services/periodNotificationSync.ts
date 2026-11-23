@@ -142,6 +142,18 @@ export async function syncPeriodNotifications(options: {
     return;
   }
 
+  const remotePushActive = (await AsyncStorage.getItem('@remote_push_registered')) === 'true';
+  if (remotePushActive) {
+    // Backend PeriodNotificationsService already delivers PERIOD_SUPPORT via FCM/Expo push.
+    // Avoid scheduling duplicate local notifications at the same sendHours.
+    const prevSig = await AsyncStorage.getItem(SCHEDULE_SIG_KEY);
+    if (prevSig !== 'remote_handled') {
+      await cancelExistingPeriodSchedules();
+      await AsyncStorage.setItem(SCHEDULE_SIG_KEY, 'remote_handled');
+    }
+    return;
+  }
+
   const { preferences } = useFunNotificationStore.getState();
   const effectiveCycleDay =
     typeof options.cycleDay === 'number' && options.cycleDay > 0

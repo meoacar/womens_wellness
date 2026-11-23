@@ -103,13 +103,16 @@ export function CycleWheelHero({
   };
 
   const daysUntilPeriod = nextPeriodEstimate?.date
-    ? Math.max(
-        0,
-        Math.ceil(
-          (new Date(nextPeriodEstimate.date).getTime() - new Date().setHours(0, 0, 0, 0)) /
-            (1000 * 60 * 60 * 24),
-        ),
-      )
+    ? (() => {
+        const target = new Date(nextPeriodEstimate.date);
+        target.setHours(0, 0, 0, 0);
+        const todayMidnight = new Date();
+        todayMidnight.setHours(0, 0, 0, 0);
+        return Math.max(
+          0,
+          Math.round((target.getTime() - todayMidnight.getTime()) / (1000 * 60 * 60 * 24)),
+        );
+      })()
     : null;
 
   const phaseColor = cyclePhase?.color || theme.colors.primary;

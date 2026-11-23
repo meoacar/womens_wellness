@@ -188,4 +188,40 @@ ${appName} ile sağlıklı günler!
       `,
     });
   }
+
+  async sendBackupEmail(to: string, filename: string, jsonContent: string): Promise<void> {
+    if (!this.transporter) {
+      throw new Error('SMTP mail transporter is not configured');
+    }
+
+    await this.transporter.sendMail({
+      from: this.configService.get<string>('SMTP_FROM', 'no-reply@local.test'),
+      to,
+      subject: 'Kadın Atlası — Kişisel Veri Yedeğiniz',
+      text: 'Kadın Atlası hesabınıza ait taşınabilir veri yedeğiniz ektedir. Yeni bir cihaza geçtiğinizde Ayarlar > Yedek Dosyasından Geri Yükle adımından bu dosyayı seçebilirsiniz.',
+      html: `
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; color: #1f2937;">
+          <div style="background: linear-gradient(135deg, #EC4899 0%, #8B5CF6 100%); padding: 20px 24px; border-radius: 16px 16px 0 0; color: #ffffff;">
+            <h2 style="margin: 0; font-size: 20px;">Kadın Atlası — Veri Yedeği</h2>
+          </div>
+          <div style="background: #ffffff; border: 1px solid #f3e8ff; border-top: none; border-radius: 0 0 16px 16px; padding: 24px; line-height: 1.65;">
+            <p style="margin-top: 0;">Merhaba,</p>
+            <p>Kadın Atlası hesabınıza ait tüm döngü, sağlık ve wellness verilerinizin taşınabilir yedeği <strong>${filename}</strong> adıyla bu e-postaya eklenmiştir.</p>
+            <p>Yeni bir telefona geçtiğinizde:</p>
+            <ul>
+              <li>Aynı e-posta veya Google hesabıyla giriş yaptığınızda verileriniz sunucudan otomatik yüklenir.</li>
+              <li>İsterseniz ekteki bu JSON dosyasını indirip <strong>Ayarlar → Yedek Dosyasından Geri Yükle</strong> adımından da içe aktarabilirsiniz.</li>
+            </ul>
+          </div>
+        </div>
+      `,
+      attachments: [
+        {
+          filename,
+          content: jsonContent,
+          contentType: 'application/json',
+        },
+      ],
+    });
+  }
 }

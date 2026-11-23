@@ -10,6 +10,8 @@ const DEFAULT_ROWS: PremiumComparisonRow[] = [
     { id: 'c4', icon: 'bulb-outline', color: '#EC4899', title: 'Kişisel İçgörüler', freeValue: false, premiumValue: true, isActive: true },
     { id: 'c5', icon: 'planet-outline', color: '#6366F1', title: 'Derin Astroloji', freeValue: false, premiumValue: true, isActive: true },
     { id: 'c6', icon: 'hardware-chip-outline', color: '#10B981', title: 'Gelişmiş Hafıza', freeValue: false, premiumValue: true, isActive: true },
+    { id: 'c7', icon: 'images-outline', color: '#EC4899', title: 'Toplulukta Resim Ekleme', freeValue: 'Haftada 2 Resim', premiumValue: 'Haftada 5 Resim', isActive: true },
+    { id: 'c8', icon: 'sparkles', color: '#F59E0B', title: 'Topluluk PRO Üye Rozeti', freeValue: false, premiumValue: true, isActive: true },
 ];
 
 export function FeaturesComparison({ rows }: { rows?: PremiumComparisonRow[] }) {

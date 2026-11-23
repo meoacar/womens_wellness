@@ -26,6 +26,7 @@ import { ArticleCard } from '@/components/discover/ArticleCard';
 import { usePremium } from '@/hooks/usePremium';
 import { PremiumBadge } from '@/components/premium/PremiumBadge';
 import { DailyHabitSection } from '@/components/home/DailyHabitSection';
+import { DailyMicroCardsDeck } from '@/components/home/DailyMicroCardsDeck';
 import { CycleWheelHero } from '@/components/home/CycleWheelHero';
 import { WinbackOfferBanner } from '@/components/home/WinbackOfferBanner';
 import { FunNotificationExample } from '@/components/notifications';
@@ -41,6 +42,7 @@ export default function HomeScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [sessionDismissedCards, setSessionDismissedCards] = useState<Set<string>>(new Set());
   const [maintenanceDismissed, setMaintenanceDismissed] = useState(false);
+  const [lowerTab, setLowerTab] = useState<'routine' | 'discover'>('routine');
 
   const { isPremium } = usePremium();
   const { flags } = useFeatureFlags();
@@ -476,30 +478,6 @@ export default function HomeScreen() {
           </View>
         )}
 
-        {/* Subtle Premium Discovery Card (Free Users Only) */}
-        {isAuthenticated && !isPremium && (
-          <TouchableOpacity
-            style={styles.proCardWrap}
-            activeOpacity={0.88}
-            onPress={() => router.push('/premium' as any)}
-          >
-            <View style={styles.proCard}>
-              <View style={styles.proIconBox}>
-                <Ionicons name="diamond-outline" size={19} color="#DB2777" />
-              </View>
-              <View style={styles.proTextCol}>
-                <Text style={styles.proTitle}>Kadın Atlası Pro’yu Keşfet</Text>
-                <Text style={styles.proSubtitle}>
-                  3 Aylık Tahmin · Klinik Rapor · Partner Modu
-                </Text>
-              </View>
-              <View style={styles.proBadgePill}>
-                <Text style={styles.proBadgeText}>7 Gün Ücretsiz</Text>
-              </View>
-            </View>
-          </TouchableOpacity>
-        )}
-
         {/* Contextual Fun Notification */}
         {snapshot?.streak && (
           <FunNotificationExample
@@ -560,96 +538,130 @@ export default function HomeScreen() {
           </View>
         )}
 
-        {/* Daily Habit Loop */}
-        <DailyHabitSection
-          cyclePhase={ts?.cyclePhase}
-          isAuthenticated={isAuthenticated}
-        />
-
-        {/* Priority Recommendations */}
-        {visiblePriorityCards.length > 0 && (
-          <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>Senin İçin Öneriler</Text>
-            </View>
-            {visiblePriorityCards.map((card) => (
-              <PriorityCard
-                key={card.id}
-                card={card}
-                onDismiss={() => dismissCardMutation.mutate(card.id)}
+        {/* Compact Segmented Switcher for Lower Home Content */}
+        <View style={styles.lowerSegmentWrap}>
+          <View style={styles.lowerSegmentTrack}>
+            <TouchableOpacity
+              style={[
+                styles.lowerSegmentBtn,
+                lowerTab === 'routine' && styles.lowerSegmentBtnActive,
+              ]}
+              onPress={() => setLowerTab('routine')}
+              activeOpacity={0.85}
+            >
+              <Ionicons
+                name="checkmark-circle-outline"
+                size={15}
+                color={lowerTab === 'routine' ? '#FFFFFF' : theme.colors.textSecondary}
               />
-            ))}
-          </View>
-        )}
-
-        {/* Graceful Keşfet & Astroloji Section */}
-        <View style={styles.discoverSection}>
-          <View style={styles.sectionHeader}>
-            <View>
-              <Text style={styles.sectionTitle}>Keşfet</Text>
-              <Text style={styles.sectionSubtitle}>
-                Döngün ve bedenin için seçili içerikler
-              </Text>
-            </View>
-            <TouchableOpacity
-              style={styles.seeAllBtn}
-              onPress={() => router.push('/discover')}
-              activeOpacity={0.75}
-            >
-              <Text style={styles.seeAllText}>Tümü</Text>
-              <Ionicons name="chevron-forward" size={15} color={theme.colors.primary} />
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.discoverCardsGrid}>
-            <TouchableOpacity
-              style={styles.discoverPortalCard}
-              onPress={() => router.push('/discover')}
-              activeOpacity={0.88}
-            >
-              <LinearGradient
-                colors={
-                  theme.isDark
-                    ? ['#9D174D', '#DB2777']
-                    : ['#FB7185', '#EC4899']
-                }
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.discoverPortalGradient}
+              <Text
+                style={[
+                  styles.lowerSegmentText,
+                  lowerTab === 'routine' && styles.lowerSegmentTextActive,
+                ]}
               >
-                <View style={styles.discoverOrbTopRight} />
-                <View style={styles.discoverCardTopRow}>
-                  <View style={styles.discoverIconBadge}>
-                    <Ionicons name="book-outline" size={18} color="#FFFFFF" />
-                  </View>
-                  <View style={styles.discoverTagPill}>
-                    <Text style={styles.discoverTagText}>REHBER</Text>
-                  </View>
-                </View>
-                <View style={styles.discoverCardBody}>
-                  <Text style={styles.discoverPortalTitle}>Sağlık Rehberi</Text>
-                  <Text style={styles.discoverPortalSubtitle} numberOfLines={2}>
-                    Uzman makaleleri & döngü ipuçları
-                  </Text>
-                </View>
-                <View style={styles.discoverCardFooter}>
-                  <Text style={styles.discoverActionText}>Makaleleri Aç</Text>
-                  <Ionicons name="arrow-forward" size={14} color="#FFFFFF" />
-                </View>
-              </LinearGradient>
+                Günlük Rutin
+              </Text>
             </TouchableOpacity>
 
-            {flags.astrology_enabled !== false && (
+            <TouchableOpacity
+              style={[
+                styles.lowerSegmentBtn,
+                lowerTab === 'discover' && styles.lowerSegmentBtnActive,
+              ]}
+              onPress={() => setLowerTab('discover')}
+              activeOpacity={0.85}
+            >
+              <Ionicons
+                name="sparkles-outline"
+                size={15}
+                color={lowerTab === 'discover' ? '#FFFFFF' : theme.colors.textSecondary}
+              />
+              <Text
+                style={[
+                  styles.lowerSegmentText,
+                  lowerTab === 'discover' && styles.lowerSegmentTextActive,
+                ]}
+              >
+                Keşfet &amp; Astroloji
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {lowerTab === 'routine' ? (
+          <>
+            {/* Swipeable Daily Micro-Cards */}
+            <DailyMicroCardsDeck
+              phase={
+                snapshot?.user?.lifeStage === 'POSTPARTUM'
+                  ? 'POSTPARTUM'
+                  : ts?.pregnancy
+                  ? 'PREGNANCY'
+                  : ts?.cyclePhase?.phase
+              }
+              isAuthenticated={isAuthenticated}
+            />
+
+            {/* Daily Habit Loop */}
+            <DailyHabitSection
+              cyclePhase={ts?.cyclePhase}
+              isAuthenticated={isAuthenticated}
+            />
+
+            {/* Priority Recommendations */}
+            {visiblePriorityCards.length > 0 && (
+              <View style={styles.section}>
+                <View style={styles.sectionHeader}>
+                  <Text style={styles.sectionTitle}>Senin İçin Öneriler</Text>
+                </View>
+                {visiblePriorityCards.map((card) => (
+                  <PriorityCard
+                    key={card.id}
+                    card={card}
+                    onDismiss={() => dismissCardMutation.mutate(card.id)}
+                  />
+                ))}
+              </View>
+            )}
+
+            {/* Subtle Premium Discovery Card (Free Users Only) */}
+            {isAuthenticated && !isPremium && (
+              <TouchableOpacity
+                style={styles.proCardWrap}
+                activeOpacity={0.88}
+                onPress={() => router.push('/premium' as any)}
+              >
+                <View style={styles.proCard}>
+                  <View style={styles.proIconBox}>
+                    <Ionicons name="diamond-outline" size={19} color="#DB2777" />
+                  </View>
+                  <View style={styles.proTextCol}>
+                    <Text style={styles.proTitle}>Kadın Atlası Pro’yu Keşfet</Text>
+                    <Text style={styles.proSubtitle}>
+                      3 Aylık Tahmin · Klinik Rapor · Partner Modu
+                    </Text>
+                  </View>
+                  <View style={styles.proBadgePill}>
+                    <Text style={styles.proBadgeText}>7 Gün Ücretsiz</Text>
+                  </View>
+                </View>
+              </TouchableOpacity>
+            )}
+          </>
+        ) : (
+          <View style={styles.discoverSection}>
+            <View style={styles.discoverCardsGrid}>
               <TouchableOpacity
                 style={styles.discoverPortalCard}
-                onPress={() => router.push('/astrology')}
+                onPress={() => router.push('/discover')}
                 activeOpacity={0.88}
               >
                 <LinearGradient
                   colors={
                     theme.isDark
-                      ? ['#4338CA', '#7C3AED']
-                      : ['#6366F1', '#8B5CF6']
+                      ? ['#9D174D', '#DB2777']
+                      : ['#FB7185', '#EC4899']
                   }
                   start={{ x: 0, y: 0 }}
                   end={{ x: 1, y: 1 }}
@@ -658,93 +670,132 @@ export default function HomeScreen() {
                   <View style={styles.discoverOrbTopRight} />
                   <View style={styles.discoverCardTopRow}>
                     <View style={styles.discoverIconBadge}>
-                      <Ionicons name="sparkles-outline" size={18} color="#FFFFFF" />
+                      <Ionicons name="book-outline" size={17} color="#FFFFFF" />
                     </View>
                     <View style={styles.discoverTagPill}>
-                      <Text style={styles.discoverTagText}>KOZMİK</Text>
+                      <Text style={styles.discoverTagText}>REHBER</Text>
                     </View>
                   </View>
                   <View style={styles.discoverCardBody}>
-                    <Text style={styles.discoverPortalTitle}>Astroloji</Text>
+                    <Text style={styles.discoverPortalTitle}>Sağlık Rehberi</Text>
                     <Text style={styles.discoverPortalSubtitle} numberOfLines={2}>
-                      Günlük burç yorumu & harita
+                      Uzman makaleleri &amp; döngü ipuçları
                     </Text>
                   </View>
                   <View style={styles.discoverCardFooter}>
-                    <Text style={styles.discoverActionText}>Yorumu Gör</Text>
+                    <Text style={styles.discoverActionText}>Makaleleri Aç</Text>
                     <Ionicons name="arrow-forward" size={14} color="#FFFFFF" />
                   </View>
                 </LinearGradient>
               </TouchableOpacity>
+
+              {flags.astrology_enabled !== false && (
+                <TouchableOpacity
+                  style={styles.discoverPortalCard}
+                  onPress={() => router.push('/astrology')}
+                  activeOpacity={0.88}
+                >
+                  <LinearGradient
+                    colors={
+                      theme.isDark
+                        ? ['#4338CA', '#7C3AED']
+                        : ['#6366F1', '#8B5CF6']
+                    }
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={styles.discoverPortalGradient}
+                  >
+                    <View style={styles.discoverOrbTopRight} />
+                    <View style={styles.discoverCardTopRow}>
+                      <View style={styles.discoverIconBadge}>
+                        <Ionicons name="sparkles-outline" size={17} color="#FFFFFF" />
+                      </View>
+                      <View style={styles.discoverTagPill}>
+                        <Text style={styles.discoverTagText}>KOZMİK</Text>
+                      </View>
+                    </View>
+                    <View style={styles.discoverCardBody}>
+                      <Text style={styles.discoverPortalTitle}>Astroloji</Text>
+                      <Text style={styles.discoverPortalSubtitle} numberOfLines={2}>
+                        Günlük burç yorumu &amp; harita
+                      </Text>
+                    </View>
+                    <View style={styles.discoverCardFooter}>
+                      <Text style={styles.discoverActionText}>Yorumu Gör</Text>
+                      <Ionicons name="arrow-forward" size={14} color="#FFFFFF" />
+                    </View>
+                  </LinearGradient>
+                </TouchableOpacity>
+              )}
+            </View>
+
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.shortcutScroll}
+            >
+              {flags.astrology_enabled !== false && (
+                <>
+                  <TouchableOpacity
+                    style={styles.shortcutChip}
+                    onPress={() => router.push('/astrology/birth-chart')}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="planet-outline" size={14} color="#7C3AED" />
+                    <Text style={styles.shortcutText}>Doğum Haritası</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.shortcutChip}
+                    onPress={() => router.push('/astrology/compatibility')}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="heart-half-outline" size={14} color="#EC4899" />
+                    <Text style={styles.shortcutText}>Burç Uyumu</Text>
+                  </TouchableOpacity>
+                </>
+              )}
+              <TouchableOpacity
+                style={styles.shortcutChip}
+                onPress={() => router.push('/discover')}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="library-outline" size={14} color="#F97316" />
+                <Text style={styles.shortcutText}>Tüm Rehberler</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.shortcutChip}
+                onPress={() => router.push('/(tabs)/community')}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="chatbubbles-outline" size={14} color="#10B981" />
+                <Text style={styles.shortcutText}>Topluluk</Text>
+              </TouchableOpacity>
+            </ScrollView>
+
+            {snapshot?.educationalArticles && snapshot.educationalArticles.length > 0 && (
+              <View style={styles.articlesBlock}>
+                <View style={styles.articlesSubHeader}>
+                  <Text style={styles.articlesSubTitle}>Öne Çıkan Okumalar</Text>
+                  <TouchableOpacity
+                    onPress={() => router.push('/discover')}
+                    activeOpacity={0.75}
+                  >
+                    <Text style={styles.seeAllText}>Tümünü Gör</Text>
+                  </TouchableOpacity>
+                </View>
+                {snapshot.educationalArticles.slice(0, 2).map((article) => (
+                  <ArticleCard
+                    key={article.id}
+                    article={article}
+                    variant="horizontal"
+                    onPress={() => router.push(`/discover/article/${article.id}`)}
+                    onSave={() => toggleSaveMutation.mutate(article.id)}
+                  />
+                ))}
+              </View>
             )}
           </View>
-
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.shortcutScroll}
-          >
-            {flags.astrology_enabled !== false && (
-              <>
-                <TouchableOpacity
-                  style={styles.shortcutChip}
-                  onPress={() => router.push('/astrology/birth-chart')}
-                  activeOpacity={0.8}
-                >
-                  <Ionicons name="planet-outline" size={14} color="#7C3AED" />
-                  <Text style={styles.shortcutText}>Doğum Haritası</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.shortcutChip}
-                  onPress={() => router.push('/astrology/compatibility')}
-                  activeOpacity={0.8}
-                >
-                  <Ionicons name="heart-half-outline" size={14} color="#EC4899" />
-                  <Text style={styles.shortcutText}>Burç Uyumu</Text>
-                </TouchableOpacity>
-              </>
-            )}
-            <TouchableOpacity
-              style={styles.shortcutChip}
-              onPress={() => router.push('/discover')}
-              activeOpacity={0.8}
-            >
-              <Ionicons name="library-outline" size={14} color="#F97316" />
-              <Text style={styles.shortcutText}>Tüm Rehberler</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.shortcutChip}
-              onPress={() => router.push('/(tabs)/community')}
-              activeOpacity={0.8}
-            >
-              <Ionicons name="chatbubbles-outline" size={14} color="#10B981" />
-              <Text style={styles.shortcutText}>Topluluk</Text>
-            </TouchableOpacity>
-          </ScrollView>
-
-          {snapshot?.educationalArticles && snapshot.educationalArticles.length > 0 && (
-            <View style={styles.articlesBlock}>
-              <View style={styles.articlesSubHeader}>
-                <Text style={styles.articlesSubTitle}>Öne Çıkan Okumalar</Text>
-                <TouchableOpacity
-                  onPress={() => router.push('/discover')}
-                  activeOpacity={0.75}
-                >
-                  <Text style={styles.seeAllText}>Tümünü Gör</Text>
-                </TouchableOpacity>
-              </View>
-              {snapshot.educationalArticles.slice(0, 3).map((article) => (
-                <ArticleCard
-                  key={article.id}
-                  article={article}
-                  variant="horizontal"
-                  onPress={() => router.push(`/discover/article/${article.id}`)}
-                  onSave={() => toggleSaveMutation.mutate(article.id)}
-                />
-              ))}
-            </View>
-          )}
-        </View>
+        )}
 
         <View style={styles.bottomSpacer} />
       </ScrollView>
@@ -762,7 +813,7 @@ const createStyles = (theme: ReturnType<typeof useTheme>) =>
       flex: 1,
     },
     contentContainer: {
-      paddingBottom: 108,
+      paddingBottom: 92,
     },
     loadingContainer: {
       flex: 1,
@@ -1194,8 +1245,8 @@ const createStyles = (theme: ReturnType<typeof useTheme>) =>
       overflow: 'hidden',
     },
     discoverPortalGradient: {
-      padding: 15,
-      minHeight: 146,
+      padding: 13,
+      minHeight: 118,
       justifyContent: 'space-between',
       position: 'relative',
     },
@@ -1293,7 +1344,40 @@ const createStyles = (theme: ReturnType<typeof useTheme>) =>
       fontWeight: '800',
       color: theme.colors.text,
     },
+    lowerSegmentWrap: {
+      paddingHorizontal: 20,
+      marginBottom: 14,
+    },
+    lowerSegmentTrack: {
+      flexDirection: 'row',
+      padding: 4,
+      borderRadius: 16,
+      backgroundColor: theme.isDark ? 'rgba(255,255,255,0.06)' : '#F3F4F6',
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      gap: 4,
+    },
+    lowerSegmentBtn: {
+      flex: 1,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 6,
+      paddingVertical: 10,
+      borderRadius: 12,
+    },
+    lowerSegmentBtnActive: {
+      backgroundColor: theme.colors.primary,
+    },
+    lowerSegmentText: {
+      fontSize: 13,
+      fontWeight: '700',
+      color: theme.colors.textSecondary,
+    },
+    lowerSegmentTextActive: {
+      color: '#FFFFFF',
+    },
     bottomSpacer: {
-      height: 24,
+      height: 12,
     },
   });

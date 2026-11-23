@@ -74,6 +74,17 @@ export class CyclesService {
   /**
    * Create a new period cycle
    */
+  private assertNotFutureDate(date: Date, label = 'Tarih'): void {
+    const nowLocal = new Date(Date.now() + 3 * 60 * 60 * 1000);
+    const todayKey = nowLocal.toISOString().slice(0, 10);
+    const targetKey = this.toDateKey(date);
+    if (targetKey > todayKey) {
+      throw new BadRequestException(
+        `${label} ileri bir tarih olamaz. Henüz gelmemiş günler için kayıt girilemez.`,
+      );
+    }
+  }
+
   async createCycle(
     userId: string,
     data: {
@@ -85,6 +96,11 @@ export class CyclesService {
   ) {
     const startDate = this.parseCalendarDate(data.startDate);
     const endDate = data.endDate ? this.parseCalendarDate(data.endDate) : null;
+
+    this.assertNotFutureDate(startDate, 'Regl başlangıç tarihi');
+    if (endDate) {
+      this.assertNotFutureDate(endDate, 'Regl bitiş tarihi');
+    }
 
     if (endDate && endDate < startDate) {
       throw new BadRequestException('Bitiş tarihi başlangıç tarihinden önce olamaz.');
@@ -157,6 +173,13 @@ export class CyclesService {
           : existing.endDate
             ? this.parseCalendarDate(this.toDateKey(new Date(existing.endDate)))
             : null;
+
+    if (data.startDate) {
+      this.assertNotFutureDate(nextStart, 'Regl başlangıç tarihi');
+    }
+    if (data.endDate && nextEnd) {
+      this.assertNotFutureDate(nextEnd, 'Regl bitiş tarihi');
+    }
 
     if (nextEnd && nextEnd < nextStart) {
       throw new BadRequestException('Bitiş tarihi başlangıç tarihinden önce olamaz.');
@@ -580,6 +603,8 @@ export class CyclesService {
     // If data.date is "2025-10-09", we want exactly that date in local timezone
     const dateParts = data.date.split('-').map(Number);
     const date = new Date(dateParts[0], dateParts[1] - 1, dateParts[2], 0, 0, 0, 0);
+
+    this.assertNotFutureDate(date, 'Günlük kayıt tarihi');
 
     // Find if date falls within any cycle
     const cycle = await this.prisma.periodCycle.findFirst({

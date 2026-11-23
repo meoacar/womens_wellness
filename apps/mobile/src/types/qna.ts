@@ -45,6 +45,7 @@ export interface QuestionAuthor {
     displayName: string;
     profilePictureUrl?: string;
     reputation?: number;
+    isPremium?: boolean;
 }
 
 export interface Question {
@@ -58,6 +59,7 @@ export interface Question {
     status: QuestionStatus;
     viewCount: number;
     isPremium: boolean;
+    imageUrls?: string[];
     createdAt: string;
     updatedAt: string;
     user?: QuestionAuthor;
@@ -78,6 +80,7 @@ export interface Answer {
     content: string;
     isBestAnswer: boolean;
     voteCount: number;
+    imageUrls?: string[];
     createdAt: string;
     updatedAt: string;
     user?: QuestionAuthor;
@@ -175,6 +178,10 @@ export interface QnaQuota {
     remaining: number;
     isPremium: boolean;
     resetsAt: string;
+    imagesUsed?: number;
+    imageLimit?: number;
+    imageRemaining?: number;
+    imageResetsAt?: string;
 }
 
 // DTOs
@@ -184,6 +191,7 @@ export interface CreateQuestionDto {
     category: QuestionCategory;
     tags?: string[];
     isAnonymous?: boolean;
+    imageUrls?: string[];
 }
 
 export interface UpdateQuestionDto {
@@ -196,6 +204,7 @@ export interface UpdateQuestionDto {
 
 export interface CreateAnswerDto {
     content: string;
+    imageUrls?: string[];
 }
 
 export interface UpdateAnswerDto {

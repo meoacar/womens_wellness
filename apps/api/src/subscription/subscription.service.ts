@@ -929,6 +929,11 @@ export class SubscriptionService {
             insightsCount,
             completedBadges,
             usageQuota,
+            periodCount,
+            waterCount,
+            questionCount,
+            answerCount,
+            userRecord,
         ] = await Promise.all([
             this.prisma.premiumFeatureUsage.findMany({
                 where: { userId },
@@ -952,6 +957,14 @@ export class SubscriptionService {
             this.prisma.usageQuota.findUnique({
                 where: { userId_monthKey: { userId, monthKey } },
             }),
+            this.prisma.periodCycle.count({ where: { userId } }),
+            this.prisma.waterLog.count({ where: { userId } }),
+            this.prisma.question.count({ where: { userId } }),
+            this.prisma.answer.count({ where: { userId } }),
+            this.prisma.user.findUnique({
+                where: { id: userId },
+                select: { createdAt: true },
+            }),
         ]);
 
         const totalMessages = Math.max(
@@ -969,11 +982,15 @@ export class SubscriptionService {
 
         const currentStreak = gamification?.currentStreak || 0;
         const longestStreak = gamification?.longestStreak || 0;
-        const totalDataEntries = gamification?.totalDataEntries || 0;
+        const realEntriesCount =
+            periodCount + waterCount + questionCount + answerCount + userMessagesCount;
+        const totalDataEntries = Math.max(gamification?.totalDataEntries || 0, realEntriesCount);
 
         // Member since date
         const memberSince =
-            subscription.startDate?.toISOString() || subscription.createdAt.toISOString();
+            subscription.startDate?.toISOString() ||
+            userRecord?.createdAt?.toISOString() ||
+            subscription.createdAt.toISOString();
 
         return {
             totalMessages,

@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { HomeController } from './home.controller';
 import { HomeService } from './home.service';
+import { DailyCardsService } from './daily-cards.service';
 import { PrismaModule } from '../prisma/prisma.module';
 import { MetricsModule } from '../metrics/metrics.module';
 import { CyclesModule } from '../cycles/cycles.module';
@@ -12,7 +13,7 @@ import { DiscoverModule } from '../discover/discover.module';
 @Module({
   imports: [PrismaModule, MetricsModule, CyclesModule, WaterModule, PregnancyModule, WellnessModule, DiscoverModule],
   controllers: [HomeController],
-  providers: [HomeService],
-  exports: [HomeService],
+  providers: [HomeService, DailyCardsService],
+  exports: [HomeService, DailyCardsService],
 })
 export class HomeModule { }

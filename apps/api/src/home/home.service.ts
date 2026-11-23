@@ -224,39 +224,30 @@ export class HomeService {
     let nextPeriodEstimate;
 
     if (cycles && cycles.length > 0) {
-      const latestCycle = cycles[0];
-      const cycleStart = new Date(latestCycle.startDate);
-      cycleDay = Math.floor((today.getTime() - cycleStart.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+      // Find the most recent cycle that has already started (or fall back to latest)
+      const activeOrPastCycle =
+        cycles.find((c) => {
+          const s = new Date(c.startDate);
+          s.setHours(0, 0, 0, 0);
+          return s.getTime() <= today.getTime();
+        }) ?? cycles[0];
 
-      // Simple prediction based on average cycle length
-      if (cycles.length >= 3) {
-        const completedCycles = cycles.filter(c => c.endDate);
-        if (completedCycles.length >= 2) {
-          const avgCycleLength = completedCycles.reduce((sum, c) => {
-            const start = new Date(c.startDate);
-            const end = new Date(c.endDate!);
-            return sum + Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
-          }, 0) / completedCycles.length;
+      const cycleStart = new Date(activeOrPastCycle.startDate);
+      cycleStart.setHours(0, 0, 0, 0);
+      const diffDays = Math.round(
+        (today.getTime() - cycleStart.getTime()) / (1000 * 60 * 60 * 24),
+      );
+      if (diffDays >= 0) {
+        cycleDay = diffDays + 1;
+      }
 
-          const variance = completedCycles.reduce((sum, c) => {
-            const start = new Date(c.startDate);
-            const end = new Date(c.endDate!);
-            const cycleLength = Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
-            return sum + Math.abs(cycleLength - avgCycleLength);
-          }, 0) / completedCycles.length;
-
-          const estimatedNextPeriod = new Date(cycleStart);
-          estimatedNextPeriod.setDate(estimatedNextPeriod.getDate() + Math.round(avgCycleLength));
-
-          let confidence: 'low' | 'medium' | 'high' = 'low';
-          if (variance < 2) confidence = 'high';
-          else if (variance < 4) confidence = 'medium';
-
-          nextPeriodEstimate = {
-            date: estimatedNextPeriod,
-            confidence,
-          };
-        }
+      // Use the exact same PredictionService calculation as the Calendar/Period screen
+      const { prediction } = await this.cyclesService.getPrediction(userId);
+      if (prediction?.nextStart) {
+        nextPeriodEstimate = {
+          date: prediction.nextStart,
+          confidence: prediction.confidence,
+        };
       }
     }
 

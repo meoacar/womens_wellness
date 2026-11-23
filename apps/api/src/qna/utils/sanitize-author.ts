@@ -12,6 +12,9 @@ export interface RawAuthorUser {
     reputation?: {
         totalPoints?: number | null;
     } | null;
+    subscription?: {
+        status?: string | null;
+    } | null;
 }
 
 export interface PublicAuthorUser {
@@ -20,6 +23,7 @@ export interface PublicAuthorUser {
     displayName: string;
     profilePictureUrl: string | null;
     reputation?: number;
+    isPremium?: boolean;
 }
 
 export interface AnonymityContext {
@@ -50,11 +54,14 @@ export function buildPublicDisplayName(user?: RawAuthorUser | null): string {
 
 export function sanitizePublicAuthor(user?: RawAuthorUser | null): PublicAuthorUser | undefined {
     if (!user) return undefined;
+    const isPremium =
+        user.subscription?.status === 'ACTIVE' || user.subscription?.status === 'TRIALING';
     return {
         id: user.id,
         username: user.username ?? null,
         displayName: buildPublicDisplayName(user),
         profilePictureUrl: user.profile?.profilePictureUrl ?? null,
+        ...(isPremium ? { isPremium: true } : {}),
         ...(user.reputation !== undefined
             ? { reputation: user.reputation?.totalPoints ?? 0 }
             : {}),
